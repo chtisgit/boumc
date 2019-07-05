@@ -43,7 +43,7 @@ static auto matchMagic(std::istream &in) -> bool
 	std::vector<char> r(5);
 	in.get(r.data(), r.size());
 	std::string s(r.begin(), --r.end());
-	return s == "aig " || s == "aag ";
+	return s == "aag ";
 }
 
 template <typename Func>
@@ -73,7 +73,7 @@ auto AIG::FromStream(std::istream &in) -> AIG
 	skipwhite(in, true);
 
 	if (!matchMagic(in))
-		throw std::runtime_error("not AIGer format!");
+		throw std::runtime_error("not AIGer ASCII format!");
 
 	const auto maxVarInd = readnum(in);
 	skipwhite(in);

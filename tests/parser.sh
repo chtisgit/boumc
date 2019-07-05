@@ -7,11 +7,11 @@ for dir in $tests
 do
 	testname=`basename $dir`
 	echo "$testname parser tests"
-	aig=`find $dir -name '*.aig'`
+	aag=`find $dir -name '*.aag'`
 
 	count=0
 	failed=0
-	for a in $aig
+	for a in $aag
 	do
 		n=`basename $a`
 		printf "trying %-15s " "$n"
