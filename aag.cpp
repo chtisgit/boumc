@@ -38,11 +38,12 @@ static auto readnum(std::istream &in) -> int
 	return n;
 }
 
-static auto match(std::istream &in, const std::string &s) -> bool
+static auto matchMagic(std::istream &in) -> bool
 {
-	std::vector<char> r(s.size() + 1);
+	std::vector<char> r(5);
 	in.get(r.data(), r.size());
-	return std::string(r.begin(), --r.end()) == s;
+	std::string s(r.begin(), --r.end());
+	return s == "aig " || s == "aag ";
 }
 
 template <typename Func>
@@ -71,7 +72,7 @@ auto AIG::FromStream(std::istream &in) -> AIG
 {
 	skipwhite(in, true);
 
-	if (!match(in, "aag "))
+	if (!matchMagic(in))
 		throw std::runtime_error("not AIGer format!");
 
 	const auto maxVarInd = readnum(in);

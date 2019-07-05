@@ -5,10 +5,10 @@
 struct AIG {
 
 	struct And {
-		int in1, in2;
 		int out;
+		int in1, in2;
 
-		And(int in1_, int in2_, int out_) : in1(in1_), in2(in2_), out(out_)
+		And(int out_, int in1_, int in2_) : out(out_), in1(in1_), in2(in2_)
 		{
 		}
 	};
