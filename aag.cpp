@@ -122,5 +122,5 @@ auto AIG::FromStream(std::istream &in) -> AIG
 		});
 	}
 
-	return AIG{};
+	return aig;
 }

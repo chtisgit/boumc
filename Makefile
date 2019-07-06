@@ -8,7 +8,7 @@ CXXFLAGS := -std=c++11 $(CXXFLAGS)
 
 all: boumc
 
-boumc: aag.o main.o
+boumc: aag.o main.o formula.o
 	$(CXX) $(LFLAGS) -o $@ $^ $(LIBS)
 
 %.o: %.cpp

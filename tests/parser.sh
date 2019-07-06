@@ -15,7 +15,7 @@ do
 	do
 		n=`basename $a`
 		printf "trying %-15s " "$n"
-		./boumc < $a > /dev/null 2>/dev/null
+		./boumc --parser-only < $a > /dev/null 2>/dev/null
 		if [ $? -eq 0 ]; then
 			echo "[OK]"
 		else
