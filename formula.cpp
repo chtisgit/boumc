@@ -96,13 +96,9 @@ auto BinaryOp::Free() -> void
 auto BinaryOp::Invert() -> Formula *
 {
 	op = op == '&' ? '|' : '&';
-	std::cerr << "len " << ff.size() << std::endl;
-	for (size_t i = 0; i < ff.size(); i++) {
-		std::cerr << "vorher  f " << ff[i] << std::endl;
-		ff[i] = ff[i]->Invert();
-		std::cerr << "nachher f " << ff[i] << std::endl;
+	for (auto &f : ff) {
+		f = f->Invert();
 	}
-	std::cerr << "done" << std::endl;
 	return dynamic_cast<Formula*>(this);
 }
 

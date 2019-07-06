@@ -89,36 +89,28 @@ auto AIG::FromStream(std::istream &in) -> AIG
 
 	AIG aig;
 
-	std::cout << "parsing inputs ..." << std::endl;
 	int count;
 	for (count = inputLines; !in.eof() && count != 0; --count) {
 		readline(in, 1, [&](const std::vector<int> &v) {
 			aig.inputs.push_back(v[0]);
-			std::cout << "input " << v[0] << std::endl;
 		});
 	}
 
-	std::cout << "parsing latches ..." << std::endl;
 	for (count = stateLines; !in.eof() && count != 0; --count) {
 		readline(in, 2, [&](const std::vector<int> &v) {
 			aig.latches.emplace_back(v[0], v[1]);
-			std::cout << "latch " << v[0] << " " << v[1] << std::endl;
 		});
 	}
 
-	std::cout << "parsing outputs ..." << std::endl;
 	for (count = outputLines; !in.eof() && count != 0; --count) {
 		readline(in, 1, [&](const std::vector<int> &v) {
 			aig.outputs.push_back(v[0]);
-			std::cout << "output " << v[0] << std::endl;
 		});
 	}
 
-	std::cout << "parsing gates ..." << std::endl;
 	for (count = gateLines; !in.eof() && count != 0; --count) {
 		readline(in, 3, [&](const std::vector<int> &v) {
 			aig.gates.emplace_back(v[0], v[1], v[2]);
-			std::cout << "gate " << v[0] << " " << v[1] << " " << v[2] << std::endl;
 		});
 	}
 
