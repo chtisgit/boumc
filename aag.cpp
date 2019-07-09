@@ -1,4 +1,5 @@
 #include "aag.h"
+#include <algorithm>
 #include <cctype>
 #include <functional>
 #include <vector>
@@ -68,6 +69,26 @@ auto readline(std::istream &in, int nums, Func f) -> std::istream &
 	return in;
 }
 
+auto AIG::IsInput(int var) const -> bool
+{
+	return std::find(inputs.cbegin(), inputs.cend(), var) != inputs.cend();
+}
+auto AIG::IsOutput(int var) const -> bool
+{
+	return std::find(outputs.cbegin(), outputs.cend(), var) != outputs.cend();
+}
+auto AIG::IsGateOutput(int var) const -> bool
+{
+	return std::find_if(gates.cbegin(), gates.cend(),
+	                    [var](const AIG::And &g) { return g.out == var; }) != gates.cend();
+}
+auto AIG::IsLatchOutput(int var) const -> bool
+{
+	return std::find_if(latches.cbegin(), latches.cend(), [var](const std::pair<int, int> &l) {
+		       return l.first == var;
+	       }) != latches.cend();
+}
+
 auto AIG::FromStream(std::istream &in) -> AIG
 {
 	skipwhite(in, true);
@@ -91,21 +112,16 @@ auto AIG::FromStream(std::istream &in) -> AIG
 
 	int count;
 	for (count = inputLines; !in.eof() && count != 0; --count) {
-		readline(in, 1, [&](const std::vector<int> &v) {
-			aig.inputs.push_back(v[0]);
-		});
+		readline(in, 1, [&](const std::vector<int> &v) { aig.inputs.push_back(v[0]); });
 	}
 
 	for (count = stateLines; !in.eof() && count != 0; --count) {
-		readline(in, 2, [&](const std::vector<int> &v) {
-			aig.latches.emplace_back(v[0], v[1]);
-		});
+		readline(in, 2,
+		         [&](const std::vector<int> &v) { aig.latches.emplace_back(v[0], v[1]); });
 	}
 
 	for (count = outputLines; !in.eof() && count != 0; --count) {
-		readline(in, 1, [&](const std::vector<int> &v) {
-			aig.outputs.push_back(v[0]);
-		});
+		readline(in, 1, [&](const std::vector<int> &v) { aig.outputs.push_back(v[0]); });
 	}
 
 	for (count = gateLines; !in.eof() && count != 0; --count) {

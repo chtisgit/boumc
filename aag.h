@@ -18,5 +18,10 @@ struct AIG {
 	std::vector<std::pair<int, int>> latches;
 	std::vector<And> gates;
 
+	auto IsInput(int var) const -> bool;
+	auto IsOutput(int var) const -> bool;
+	auto IsGateOutput(int var) const -> bool;
+	auto IsLatchOutput(int var) const -> bool;
+
 	static auto FromStream(std::istream &) -> AIG;
 };

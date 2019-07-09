@@ -50,9 +50,10 @@ auto main(int argc, char **argv) -> int
 
 	for(const auto output : aig.outputs) {
 		auto f = Formula::FromAIG(aig, output);
-		std::cout << output << " = " << f->String() << std::endl;
-		f = f->Invert();
-		std::cout << "negated: " << f->String() << std::endl;
+		for(int i = 0; i != 4; i++){
+			std::cout << "(k=" << i << ") " << output << " = " << f->String() << std::endl;
+			Formula::Unwind(aig, f);
+		}
 		f->Free();
 	}
 
