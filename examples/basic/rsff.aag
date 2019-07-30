@@ -1,0 +1,9 @@
+    aag 12 2 1 2 2
+    2                           input 0         S
+    4                           input 1         R
+    10 6                        latch 0         Q next(Q)
+    11                          output 0        Q
+    9                           output 1        !Q
+    6 4 9                       AND gate 0      -(R & -Q)
+    8 2 11                       AND gate 1      -(S & Q)
+
