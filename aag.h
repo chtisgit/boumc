@@ -17,6 +17,7 @@ struct AIG {
 	std::vector<int> outputs;
 	std::vector<std::pair<int, int>> latches;
 	std::vector<And> gates;
+	int lastLit;
 
 	auto IsInput(int var) const -> bool;
 	auto IsOutput(int var) const -> bool;

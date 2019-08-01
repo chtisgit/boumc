@@ -1,4 +1,5 @@
 #include "formula.h"
+#include <map>
 
 Formula::~Formula()
 {
@@ -19,6 +20,11 @@ auto Formula::Invert() -> Formula *
 	throw std::runtime_error("Formula::Invert");
 }
 
+auto Formula::Copy() const -> Formula *
+{
+	throw std::runtime_error("Formula::Copy");
+}
+
 auto True::String() const -> std::string
 {
 	return "T";
@@ -31,6 +37,11 @@ auto True::Free() -> void
 auto True::Invert() -> Formula *
 {
 	return &FalseVal;
+}
+
+auto True::Copy() const -> Formula *
+{
+	return &TrueVal;
 }
 
 auto False::String() const -> std::string
@@ -47,32 +58,43 @@ auto False::Invert() -> Formula *
 	return dynamic_cast<Formula *>(&TrueVal);
 }
 
-Var::Var(int var_) : var(var_)
+auto False::Copy() const -> Formula *
+{
+	return &FalseVal;
+}
+
+FormulaVar::FormulaVar(int var_) : var(var_)
 {
 }
 
-auto Var::String() const -> std::string
+auto FormulaVar::String() const -> std::string
 {
 	char buf[20];
 	sprintf(buf, "%d", var);
 	return buf;
 }
 
-auto Var::Free() -> void
+auto FormulaVar::Free() -> void
 {
 	delete this;
 }
 
-auto Var::Invert() -> Formula *
+auto FormulaVar::Invert() -> Formula *
 {
 	return dynamic_cast<Formula *>(new Negate(this));
 }
 
-BinaryOp::BinaryOp(char op_) : op(op_)
+auto FormulaVar::Copy() const -> Formula *
 {
+	return new FormulaVar(var);
 }
 
-BinaryOp::BinaryOp(char op_, Formula *f1_, Formula *f2_) : ff(2), op(op_)
+BinaryOp::BinaryOp(char op_) : op(op_)
+{
+	std::fill(ff.begin(), ff.end(), nullptr);
+}
+
+BinaryOp::BinaryOp(char op_, Formula *f1_, Formula *f2_) : op(op_)
 {
 	ff[0] = f1_;
 	ff[1] = f2_;
@@ -106,6 +128,15 @@ auto BinaryOp::Invert() -> Formula *
 	return dynamic_cast<Formula *>(this);
 }
 
+auto BinaryOp::Copy() const -> Formula *
+{
+	auto copy = new BinaryOp(op);
+	copy->ff[0] = ff[0]->Copy();
+	copy->ff[1] = ff[1]->Copy();
+
+	return copy;
+}
+
 Negate::Negate(Formula *f_) : f(f_)
 {
 }
@@ -130,6 +161,12 @@ auto Negate::Invert() -> Formula *
 	return dynamic_cast<Formula *>(res);
 }
 
+auto Negate::Copy() const -> Formula *
+{
+	return new Negate(f->Copy());
+}
+
+#if 0
 auto recursiveAnds(const AIG& aig, BinaryOp *bop, int a, int b) -> Formula *
 {
 	std::vector<int> v{a,b};
@@ -154,19 +191,22 @@ auto recursiveAnds(const AIG& aig, BinaryOp *bop, int a, int b) -> Formula *
 
 	return bop;
 }
+#endif
 
-Latch::Latch(int q_, int nextQ_) : q(q_), nextQ(nextQ_), f(nullptr) {}
+Latch::Latch(int q_, int nextQ_) : q(q_), nextQ(nextQ_), f(nullptr)
+{
+}
 
 auto Latch::String() const -> std::string
 {
-	if(f == nullptr)
+	if (f == nullptr)
 		return "F";
 	return f->String();
 }
 
 auto Latch::Free() -> void
 {
-	if(f != nullptr)
+	if (f != nullptr)
 		delete f;
 }
 
@@ -175,39 +215,61 @@ auto Latch::Invert() -> Formula *
 	return new Negate(this);
 }
 
+auto Latch::Copy() const -> Formula *
+{
+	auto copy = new Latch(q, nextQ);
+	if (f != nullptr) {
+		copy->f = f->Copy();
+	}
+	return copy;
+}
+
+static auto neg(Formula *f, bool n = true) -> Formula *
+{
+	if (!n) {
+		return f;
+	}
+
+	auto t = dynamic_cast<True *>(f);
+	if (t != nullptr) {
+		return &FalseVal;
+	}
+
+	auto fa = dynamic_cast<False *>(f);
+	if (fa != nullptr) {
+		return &TrueVal;
+	}
+
+	return new Negate(f);
+}
+
 auto Formula::FromAIG(const AIG &aig, int var) -> Formula *
 {
 	if (var == 0) {
-		return &TrueVal;
-	} else if (var == 1) {
 		return &FalseVal;
+	} else if (var == 1) {
+		return &TrueVal;
 	}
 
 	auto negated = var % 2 == 1;
 	if (negated)
 		var--;
-	auto negater = [negated](Formula *f) -> Formula * {
-		if (!negated)
-			return f;
-
-		return new Negate(f);
-	};
 
 	if (aig.IsInput(var)) {
-		return negater(new Var(var / 2));
+		return neg(new FormulaVar(var), negated);
 	}
 
 	for (const auto &gate : aig.gates) {
 		if (gate.out == var) {
-			auto g =
-			    new BinaryOp('&');
-			return negater(recursiveAnds(aig, g, gate.in1, gate.in2));
+			return neg(
+			    new BinaryOp('&', FromAIG(aig, gate.in1), FromAIG(aig, gate.in2)),
+			    negated);
 		}
 	}
 
-	for (const auto &latch: aig.latches) {
+	for (const auto &latch : aig.latches) {
 		if (latch.first == var) {
-			return negater(new Latch(latch.first, latch.second));
+			return neg(new Latch(latch.first, latch.second), negated);
 		}
 	}
 
@@ -219,9 +281,9 @@ auto Formula::FromAIG(const AIG &aig, int var) -> Formula *
 
 auto Formula::Unwind(const AIG &aig, Formula *f) -> void
 {
-	auto latch = dynamic_cast<Latch*>(f);
-	if(latch != nullptr) {
-		if(latch->f == nullptr){
+	auto latch = dynamic_cast<Latch *>(f);
+	if (latch != nullptr) {
+		if (latch->f == nullptr) {
 			latch->f = FromAIG(aig, latch->nextQ);
 			return;
 		}
@@ -230,19 +292,210 @@ auto Formula::Unwind(const AIG &aig, Formula *f) -> void
 		return;
 	}
 
-	auto gate = dynamic_cast<BinaryOp*>(f);
-	if(gate != nullptr) {
-		for(auto g : gate->ff) {
+	auto gate = dynamic_cast<BinaryOp *>(f);
+	if (gate != nullptr) {
+		for (auto g : gate->ff) {
 			Unwind(aig, g);
 		}
 		return;
 	}
 
-	auto neg = dynamic_cast<Negate*>(f);
-	if(neg != nullptr) {
+	auto neg = dynamic_cast<Negate *>(f);
+	if (neg != nullptr) {
 		Unwind(aig, neg->f);
 		return;
 	}
+}
+
+static auto getVar(Formula *f, int &nameCount) -> std::pair<int, bool>
+{
+	if (f == nullptr) {
+		return std::make_pair(nameCount++, false);
+	}
+
+	auto fv = dynamic_cast<FormulaVar *>(f);
+	if (fv == nullptr) {
+		return std::make_pair(nameCount++, false);
+	}
+
+	return std::make_pair(fv->var, true);
+}
+
+static auto Tseitin2(Formula *f, std::vector<Formula *> &clauses, int name, int &nameCount)
+    -> Formula *
+{
+	auto n = dynamic_cast<Negate *>(f);
+	if (n != nullptr) {
+		auto next = getVar(n->f, nameCount);
+
+		clauses.push_back(new BinaryOp('|', new Negate(new FormulaVar(name)),
+					       new Negate(new FormulaVar(next.first))));
+		clauses.push_back(
+		    new BinaryOp('|', new FormulaVar(name), new FormulaVar(next.first)));
+
+		if (!next.second) {
+			Tseitin2(n->f, clauses, next.first, nameCount);
+		}
+
+		return nullptr;
+	}
+
+	auto b = dynamic_cast<BinaryOp *>(f);
+	if (b != nullptr) {
+		auto f0 = getVar(b->ff[0], nameCount);
+		auto f1 = getVar(b->ff[1], nameCount);
+
+		if (b->op == '&') {
+			clauses.push_back(new BinaryOp('|', new Negate(new FormulaVar(f0.first)),
+						       new FormulaVar(name)));
+			clauses.push_back(new BinaryOp('|', new Negate(new FormulaVar(f1.first)),
+						       new FormulaVar(name)));
+			clauses.push_back(new BinaryOp(
+			    '|', new Negate(new FormulaVar(name)),
+			    new BinaryOp('|', new FormulaVar(f0.first), new FormulaVar(f1.first))));
+
+		} else {
+			clauses.push_back(new BinaryOp('|', new Negate(new FormulaVar(name)),
+						       new FormulaVar(f0.first)));
+			clauses.push_back(new BinaryOp('|', new Negate(new FormulaVar(name)),
+						       new FormulaVar(f1.first)));
+			clauses.push_back(
+			    new BinaryOp('|', new FormulaVar(name),
+					 new Negate(new BinaryOp('|', new FormulaVar(f0.first),
+								 new FormulaVar(f1.first)))));
+		}
+
+		if (!f0.second) {
+			Tseitin2(b->ff[0], clauses, f0.first, nameCount);
+		}
+
+		if (!f1.second) {
+			Tseitin2(b->ff[1], clauses, f1.first, nameCount);
+		}
+
+		return nullptr;
+	}
+
+	auto t = dynamic_cast<True *>(f);
+	if (t != nullptr) {
+		clauses.push_back(new FormulaVar(name));
+		return nullptr;
+	}
+
+	auto fa = dynamic_cast<False *>(f);
+	if (fa != nullptr) {
+		clauses.push_back(new Negate(new FormulaVar(name)));
+		return nullptr;
+	}
+
+	auto v = dynamic_cast<FormulaVar *>(f);
+	if (v != nullptr) {
+		clauses.push_back(new BinaryOp('|', new Negate(new FormulaVar(name)), v->Copy()));
+		clauses.push_back(new BinaryOp('|', new FormulaVar(name), new Negate(v->Copy())));
+		return nullptr;
+	}
+
+	throw std::runtime_error("Tseitin2 EOF");
+}
+
+auto Formula::TseitinTransform(const Formula *f_, int firstLit) -> std::vector<Formula *>
+{
+	auto old = RemoveLatches(f_->Copy());
+
+	int name = firstLit;
+	auto root = name++;
+	std::vector<Formula *> clauses{new FormulaVar(root)};
+	Tseitin2(old, clauses, root, name);
+
+	old->Free();
+
+	return clauses;
+}
+
+auto Formula::ToSolver(Solver &s, const std::vector<Formula *> &ff) -> void
+{
+	vec<Lit> clause;
+
+	std::map<int, int> varmap;
+	auto translateVar = [&](int var) -> int {
+		auto it = varmap.find(var);
+		if (it == varmap.end()) {
+			int t = s.newVar();
+			varmap[var] = t;
+			return t;
+		}
+
+		return it->second;
+	};
+
+	for (auto it = ff.begin(); it != ff.end(); ++it) {
+		auto f = *it;
+		clause.clear();
+
+		std::vector<Formula *> todo{f};
+
+		for (size_t i = 0; i != todo.size(); ++i) {
+			auto f = todo[i];
+			
+			auto b = dynamic_cast<const BinaryOp *>(f);
+			if (b != nullptr) {
+				todo.push_back(b->ff[0]);
+				todo.push_back(b->ff[1]);
+				continue;
+			}
+
+			auto n = dynamic_cast<const Negate *>(f);
+			if (n != nullptr) {
+				auto v = dynamic_cast<const FormulaVar *>(n->f);
+				if (v == nullptr) {
+					throw std::runtime_error("complex negation");
+				}
+
+				clause.push(Lit(translateVar(v->var), true));
+				continue;
+			}
+
+			auto v = dynamic_cast<const FormulaVar *>(f);
+			if (v != nullptr) {
+				clause.push(Lit(translateVar(v->var), false));
+			}
+		}
+
+		s.addClause(clause);
+	}
+}
+
+auto Formula::RemoveLatches(Formula *f) -> Formula *
+{
+	auto l = dynamic_cast<Latch *>(f);
+	if (l != nullptr) {
+		auto inner = l->f;
+		l->f = nullptr;
+		l->Free();
+
+		if (inner == nullptr) {
+			return &FalseVal;
+		}
+
+		return RemoveLatches(inner);
+	}
+
+	auto n = dynamic_cast<Negate *>(f);
+	if (n != nullptr) {
+		n->f = RemoveLatches(n->f);
+		return n;
+	}
+
+	auto b = dynamic_cast<BinaryOp *>(f);
+	if (b != nullptr) {
+		for (auto &f_ : b->ff) {
+			f_ = RemoveLatches(f_);
+		}
+
+		return b;
+	}
+
+	return f;
 }
 
 True TrueVal;

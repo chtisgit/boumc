@@ -45,7 +45,7 @@ build:
 
 clean:
 	@rm -f $(EXEC) $(EXEC)_profile $(EXEC)_debug $(EXEC)_release $(EXEC)_static \
-	  $(COBJS) $(PCOBJS) $(DCOBJS) $(RCOBJS) depend.mak
+	  $(COBJS) $(PCOBJS) $(DCOBJS) $(RCOBJS) depend.mak libminisat.a
 
 ## Build rule
 %.o %.op %.od %.or:	%.C
@@ -73,9 +73,10 @@ $(EXEC)_static: $(RCOBJS)
 	@echo Linking $@
 	@$(CXX) --static $(RCOBJS) -lz -Wall -o $@
 
-libminisat.a:
+libminisat.a: File.o Proof.o Solver.o
 	@echo Archiving $@
-	@ar rcs $@ File.o Main.o Proof.o Solver.o
+	@ar rcs $@ $^
+	@ranlib $@
 	@ranlib $@
 	@strip $@
 

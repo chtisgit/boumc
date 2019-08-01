@@ -109,6 +109,7 @@ auto AIG::FromStream(std::istream &in) -> AIG
 	nextline(in);
 
 	AIG aig;
+	aig.lastLit = maxVarInd;
 
 	int count;
 	for (count = inputLines; !in.eof() && count != 0; --count) {
