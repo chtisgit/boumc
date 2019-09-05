@@ -121,7 +121,7 @@ auto BinaryOp::Free() -> void
 
 auto BinaryOp::Invert() -> Formula *
 {
-	op = op == '&' ? '|' : '&';
+	op = InvertOp(op);
 	for (auto &f : ff) {
 		f = f->Invert();
 	}
@@ -130,11 +130,7 @@ auto BinaryOp::Invert() -> Formula *
 
 auto BinaryOp::Copy() const -> Formula *
 {
-	auto copy = new BinaryOp(op);
-	copy->ff[0] = ff[0]->Copy();
-	copy->ff[1] = ff[1]->Copy();
-
-	return copy;
+	return new BinaryOp(op, ff[0]->Copy(), ff[1]->Copy());
 }
 
 Negate::Negate(Formula *f_) : f(f_)
@@ -240,7 +236,7 @@ static auto neg(Formula *f, bool n = true) -> Formula *
 		return &TrueVal;
 	}
 
-	return new Negate(f);
+	return f->Invert();
 }
 
 auto Formula::FromAIG(const AIG &aig, int var) -> Formula *
@@ -262,7 +258,7 @@ auto Formula::FromAIG(const AIG &aig, int var) -> Formula *
 	for (const auto &gate : aig.gates) {
 		if (gate.out == var) {
 			return neg(
-			    new BinaryOp('&', FromAIG(aig, gate.in1), FromAIG(aig, gate.in2)),
+			    new BinaryOp(And, FromAIG(aig, gate.in1), FromAIG(aig, gate.in2)),
 			    negated);
 		}
 	}
@@ -328,10 +324,10 @@ static auto Tseitin2(Formula *f, std::vector<Formula *> &clauses, int name, int 
 	if (n != nullptr) {
 		auto next = getVar(n->f, nameCount);
 
-		clauses.push_back(new BinaryOp('|', new Negate(new FormulaVar(name)),
-					       new Negate(new FormulaVar(next.first))));
+		clauses.push_back(new BinaryOp(Formula::Or, new Negate(new FormulaVar(name)),
+		                               new Negate(new FormulaVar(next.first))));
 		clauses.push_back(
-		    new BinaryOp('|', new FormulaVar(name), new FormulaVar(next.first)));
+		    new BinaryOp(Formula::Or, new FormulaVar(name), new FormulaVar(next.first)));
 
 		if (!next.second) {
 			Tseitin2(n->f, clauses, next.first, nameCount);
@@ -345,24 +341,29 @@ static auto Tseitin2(Formula *f, std::vector<Formula *> &clauses, int name, int 
 		auto f0 = getVar(b->ff[0], nameCount);
 		auto f1 = getVar(b->ff[1], nameCount);
 
-		if (b->op == '&') {
-			clauses.push_back(new BinaryOp('|', new Negate(new FormulaVar(f0.first)),
-						       new FormulaVar(name)));
-			clauses.push_back(new BinaryOp('|', new Negate(new FormulaVar(f1.first)),
-						       new FormulaVar(name)));
-			clauses.push_back(new BinaryOp(
-			    '|', new Negate(new FormulaVar(name)),
-			    new BinaryOp('|', new FormulaVar(f0.first), new FormulaVar(f1.first))));
+		if (b->op == Formula::And) {
+			clauses.push_back(new BinaryOp(Formula::Or,
+			                               new Negate(new FormulaVar(f0.first)),
+			                               new FormulaVar(name)));
+			clauses.push_back(new BinaryOp(Formula::Or,
+			                               new Negate(new FormulaVar(f1.first)),
+			                               new FormulaVar(name)));
+			clauses.push_back(
+			    new BinaryOp(Formula::Or, new Negate(new FormulaVar(name)),
+			                 new BinaryOp(Formula::Or, new FormulaVar(f0.first),
+			                              new FormulaVar(f1.first))));
 
 		} else {
-			clauses.push_back(new BinaryOp('|', new Negate(new FormulaVar(name)),
-						       new FormulaVar(f0.first)));
-			clauses.push_back(new BinaryOp('|', new Negate(new FormulaVar(name)),
-						       new FormulaVar(f1.first)));
-			clauses.push_back(
-			    new BinaryOp('|', new FormulaVar(name),
-					 new Negate(new BinaryOp('|', new FormulaVar(f0.first),
-								 new FormulaVar(f1.first)))));
+			clauses.push_back(new BinaryOp(Formula::Or,
+			                               new Negate(new FormulaVar(name)),
+			                               new FormulaVar(f0.first)));
+			clauses.push_back(new BinaryOp(Formula::Or,
+			                               new Negate(new FormulaVar(name)),
+			                               new FormulaVar(f1.first)));
+			clauses.push_back(new BinaryOp(
+			    Formula::Or, new FormulaVar(name),
+			    new BinaryOp(Formula::Or, new Negate(new FormulaVar(f0.first)),
+			                            new Negate(new FormulaVar(f1.first)))));
 		}
 
 		if (!f0.second) {
@@ -390,8 +391,10 @@ static auto Tseitin2(Formula *f, std::vector<Formula *> &clauses, int name, int 
 
 	auto v = dynamic_cast<FormulaVar *>(f);
 	if (v != nullptr) {
-		clauses.push_back(new BinaryOp('|', new Negate(new FormulaVar(name)), v->Copy()));
-		clauses.push_back(new BinaryOp('|', new FormulaVar(name), new Negate(v->Copy())));
+		clauses.push_back(
+		    new BinaryOp(Formula::Or, new Negate(new FormulaVar(name)), v->Copy()));
+		clauses.push_back(
+		    new BinaryOp(Formula::Or, new FormulaVar(name), new Negate(v->Copy())));
 		return nullptr;
 	}
 
@@ -408,6 +411,10 @@ auto Formula::TseitinTransform(const Formula *f_, int firstLit) -> std::vector<F
 	Tseitin2(old, clauses, root, name);
 
 	old->Free();
+
+	for(auto& f : clauses){
+		f = SimplifyNegations(f);
+	}
 
 	return clauses;
 }
@@ -436,7 +443,7 @@ auto Formula::ToSolver(Solver &s, const std::vector<Formula *> &ff) -> void
 
 		for (size_t i = 0; i != todo.size(); ++i) {
 			auto f = todo[i];
-			
+
 			auto b = dynamic_cast<const BinaryOp *>(f);
 			if (b != nullptr) {
 				todo.push_back(b->ff[0]);
@@ -497,6 +504,47 @@ auto Formula::RemoveLatches(Formula *f) -> Formula *
 
 	return f;
 }
+
+auto Formula::Concat(Formula *f1, Formula *f2, char op) -> Formula *
+{
+	return new BinaryOp(op, f1, f2);
+}
+
+auto Formula::SimplifyNegations(Formula *f) -> Formula*
+{
+	auto n = dynamic_cast<Negate *>(f);
+	if (n != nullptr) {
+		auto innerN = dynamic_cast<Negate*>(n->f);
+		if(innerN != nullptr){
+			auto res = innerN->f;
+			innerN->f = nullptr;
+			n->Free();
+
+			return SimplifyNegations(res);
+		}
+
+		auto innerT = dynamic_cast<True*>(n->f);
+		if(innerT != nullptr){
+			return &FalseVal;
+		}
+
+		auto innerF = dynamic_cast<False*>(n->f);
+		if(innerF != nullptr){
+			return &TrueVal;
+		}
+		
+		SimplifyNegations(n->f);
+	}
+
+	auto b = dynamic_cast<BinaryOp *>(f);
+	if (b != nullptr) {
+		b->ff[0] = SimplifyNegations(b->ff[0]);
+		b->ff[1] = SimplifyNegations(b->ff[1]);
+	}
+
+	return f;
+}
+
 
 True TrueVal;
 False FalseVal;

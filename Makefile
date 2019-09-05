@@ -30,7 +30,7 @@ boumc: aag.o main.o formula.o $(LIBS)
 %.o: %.cpp
 	$(CXX) $(CFLAGS) $(CXXFLAGS) -c -o $@ $<
 
-tests:
+test:
 	find tests -name '*.sh' | xargs -n1 sh
 
 clean:

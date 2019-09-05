@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <cassert>
 
 #include "MiniSat-p_v1.14/Solver.h"
 #include "aag.h"
@@ -15,8 +16,15 @@ struct Formula {
 	static auto Unwind(const AIG &, Formula *f) -> void;
 	static auto TseitinTransform(const Formula *f, int firstLit) -> std::vector<Formula *>;
 	static auto RemoveLatches(Formula *f) -> Formula *;
+	static auto Concat(Formula*, Formula*, char op = '&') -> Formula *;
+	static auto SimplifyNegations(Formula *f) -> Formula*;
 
 	static auto ToSolver(Solver &s, const std::vector<Formula *> &ff_) -> void;
+
+	static constexpr auto InvertOp(char op) -> char {
+		return (op == And || op == Or) ? (op == And ? Or : And) : throw std::domain_error("operator is neither And nor Or");
+	}
+	static constexpr char And = '&', Or = '|';
 };
 
 struct True : Formula {
