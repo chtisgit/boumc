@@ -55,7 +55,7 @@ auto False::Free() -> void
 
 auto False::Invert() -> Formula *
 {
-	return dynamic_cast<Formula *>(&TrueVal);
+	return &TrueVal;
 }
 
 auto False::Copy() const -> Formula *
