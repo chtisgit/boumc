@@ -1,6 +1,7 @@
 #pragma once
 #include <array>
 #include <cassert>
+#include <map>
 
 #include "MiniSat-p_v1.14/Solver.h"
 #include "aag.h"
@@ -48,7 +49,7 @@ struct Formula {
 	static auto SimplifyNegations(Formula *f) -> Formula*;
 
 	// ToSolver adds CNF clauses to a miniSAT Solver.
-	static auto ToSolver(Solver &s, const std::vector<Formula *> &ff_) -> void;
+	static auto ToSolver(Solver &s, const std::vector<Formula *> &ff_) -> std::map<int,int>;
 
 	// InvertOp returns Or when op is And and And if op is Or.
 	// The function throws a std::domain_error if op is neither And nor Or.

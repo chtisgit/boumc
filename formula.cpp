@@ -419,7 +419,7 @@ auto Formula::TseitinTransform(const Formula *f_, int firstLit) -> std::vector<F
 	return clauses;
 }
 
-auto Formula::ToSolver(Solver &s, const std::vector<Formula *> &ff) -> void
+auto Formula::ToSolver(Solver &s, const std::vector<Formula *> &ff) -> std::map<int,int>
 {
 	vec<Lit> clause;
 
@@ -470,6 +470,8 @@ auto Formula::ToSolver(Solver &s, const std::vector<Formula *> &ff) -> void
 
 		s.addClause(clause);
 	}
+
+	return varmap;
 }
 
 auto Formula::RemoveLatches(Formula *f) -> Formula *

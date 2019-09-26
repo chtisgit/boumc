@@ -1,26 +1,26 @@
 #include <algorithm>
-#include <iostream>
 #include <fstream>
+#include <iostream>
 
-#include <getopt.h>
 #include <cstring>
+#include <getopt.h>
 
 #include "aag.h"
 #include "formula.h"
 
 struct Env {
 	int K = -1;
-	bool Debug = false;
+	int Debug = 0;
 	bool ParserTest = false;
 	std::istream *inputstream = &std::cin;
 	std::ifstream file;
 };
 
 const char USAGE[] =
-    " -k <steps> [-d] [--parse-only]\n\n"
-    "-d                     include debug output\n"
+    " -k <steps> [-d <level>] [-f <file>] [--parse-only]\n\n"
+    "-d[level]             include debug output (optionally, specify debug level)\n"
     "-k <steps>             # of steps the model checker will unwind (default k=0)\n"
-	"-f <file path>         read from a file instead of console\n"
+    "-f <file path>         read from a file instead of console\n"
     "--parse-only           Only parse ASCII AIGer file (for testing)\n";
 
 auto usage(const char *prog) -> void
@@ -36,7 +36,7 @@ auto parseArgs(int argc, char **argv) -> Env
 	while (1) {
 		int option_index = 0, c;
 
-		c = getopt_long(argc, argv, "df:k:", long_options, &option_index);
+		c = getopt_long(argc, argv, "d::f:k:", long_options, &option_index);
 		if (c == -1)
 			break;
 
@@ -51,21 +51,30 @@ auto parseArgs(int argc, char **argv) -> Env
 			break;
 
 		case 'd':
-			e.Debug = true;
+			if (optarg == nullptr) {
+				e.Debug = 1;
+				break;
+			}
+
+			e.Debug = atoi(optarg);
+			if (e.Debug <= 0) {
+				e.Debug = 1;
+			}
 			break;
 
 		case 'k':
 			e.K = atoi(optarg);
 			break;
-		
+
 		case 'f':
-			if(strcmp(optarg, "-") == 0){
+			if (strcmp(optarg, "-") == 0) {
 				break;
 			}
 
 			e.file.open(optarg);
-			if(e.file.fail()){
-				std::cout << "error: cannot open file '" << optarg << "'" << std::endl;
+			if (e.file.fail()) {
+				std::cout << "error: cannot open file '" << optarg << "'"
+				          << std::endl;
 				exit(1);
 			}
 
@@ -91,14 +100,15 @@ auto parseArgs(int argc, char **argv) -> Env
 struct Trav : public ProofTraverser {
 	vec<vec<Lit>> clauses;
 
-	void print()
+	void print(std::ostream &out)
 	{
+		out << "Proof: " << std::endl;
 		for (size_t i = 0; i < clauses.size(); i++) {
-			std::cout << "Clause " << (i + 1) << ": ";
+			out << "Clause " << (i + 1) << ": ";
 			for (size_t j = 0; j < clauses[i].size(); j++) {
-				std::cout << var(clauses[i][j]) << ' ';
+				out << var(clauses[i][j]) << ' ';
 			}
-			std::cout << std::endl;
+			out << std::endl;
 		}
 	}
 
@@ -162,7 +172,7 @@ struct Trav : public ProofTraverser {
 		vec<Lit> &c = clauses.last();
 		clauses[cs[0]].copyTo(c);
 		for (int i = 0; i < xs.size(); i++)
-			resolve(c, clauses[cs[i + 1]], xs[i]);
+			this->resolve(c, clauses[cs[i + 1]], xs[i]);
 	}
 
 	void deleted(ClauseId c)
@@ -180,6 +190,70 @@ struct Trav : public ProofTraverser {
 	}
 };
 
+auto boumc_simple(const Env &env, const AIG &aig) -> int
+{
+	// the outputs of the circuit represent the properties that are to be checked.
+	// create a (P1 | P2 | ...) clause
+	auto f = Formula::FromAIG(aig, aig.outputs[0])->Invert();
+	for (size_t i = 1; i != aig.outputs.size(); i++) {
+		const auto p = Formula::FromAIG(aig, aig.outputs[i])->Invert();
+		f = Formula::Concat(f, p, '&');
+	}
+
+	for (int k = 1; k <= env.K; k++) {
+		Formula::Unwind(aig, f);
+	}
+	f = Formula::SimplifyNegations(Formula::RemoveLatches(f));
+
+	if (env.Debug) {
+		std::cout << "Formula: " << f->String() << std::endl;
+	}
+
+	auto cnf = Formula::TseitinTransform(f, aig.lastLit + 2);
+	f->Free();
+
+	if (env.Debug >= 3) {
+		std::cout << "Individual CNF Clauses:" << std::endl;
+		int c = 1;
+		for (auto f : cnf) {
+			std::cout << "[" << (c++) << "] " << f->String() << std::endl;
+		}
+		std::cout << std::endl;
+	}
+
+	Trav trav;
+
+	Solver s;
+	// proof needs to be assigned before newVar() is called on the Solver...
+	s.proof = new Proof(trav);
+
+	const auto varmap = Formula::ToSolver(s, cnf);
+	if (env.Debug >= 3) {
+		std::cout << "Translation map:" << std::endl;
+		for (const auto &entry : varmap) {
+			std::cout << "  " << entry.first << " -> " << entry.second << std::endl;
+		}
+	}
+
+	for (auto clause : cnf) {
+		clause->Free();
+	}
+
+	if (env.Debug)
+		std::cout << "Running SAT solver..." << std::endl;
+	s.solve();
+
+	// s.okay()  == true =>  SAT
+	// s.okay() == false => UNSAT
+	// SAT => E  a path to a Bad State.
+	std::cout << std::endl << (s.okay() ? "FAIL" : "OK") << std::endl;
+
+	if (env.Debug)
+		trav.print(std::cout);
+
+	return 0;
+}
+
 auto main(int argc, char **argv) -> int
 {
 	auto env = parseArgs(argc, argv);
@@ -189,7 +263,7 @@ auto main(int argc, char **argv) -> int
 		return 0;
 	}
 
-	if(aig.outputs.size() == 0){
+	if (aig.outputs.size() == 0) {
 		std::cout << "Model has no outputs. Bad states cannot be detected." << std::endl;
 		std::cout << "Exiting." << std::endl;
 		return 0;
@@ -197,51 +271,6 @@ auto main(int argc, char **argv) -> int
 
 	std::cout << "outputs " << aig.outputs.size() << std::endl;
 	std::cout << "K = " << env.K << std::endl;
-	std::cout << std::endl;
 
-	// the outputs of the circuit represent the properties that are to be checked.
-	// create a (P1 | P2 | ...) clause
-	auto f = Formula::FromAIG(aig, aig.outputs[0])->Invert();
-	for (size_t i = 1; i != aig.outputs.size(); i++) {
-		const auto p = Formula::FromAIG(aig, aig.outputs[i])->Invert();
-		f = Formula::Concat(f, p, '|');
-	}
-	
-	for (int k = 1; k <= env.K; k++) {
-		Formula::Unwind(aig, f);
-	}
-	f = Formula::SimplifyNegations(Formula::RemoveLatches(f));
-
-	if(env.Debug) {
-		std::cout << "Formula: " << f->String() << std::endl;
-	}
-
-	auto cnf = Formula::TseitinTransform(f, aig.lastLit + 2);
-	f->Free();
-
-	if (env.Debug) {
-		std::cout << "Individual CNF Clauses:" << std::endl;
-		int c = 1;
-		for (auto f : cnf) {
-			std::cout << "[" << (c++) << "] " << f->String() << std::endl;
-		}
-		std::cout << std::endl;
-	}
-
-	Solver s;
-	Formula::ToSolver(s, cnf);
-
-	for (auto clause : cnf) {
-		clause->Free();
-	}
-
-	std::cout << "Running SAT solver..." << std::endl;
-	s.solve();
-
-	// s.okay()  == true =>  SAT
-	// s.okay() == false => UNSAT
-	// SAT => E  a path to a Bad State.
-	std::cout << std::endl << (s.okay() ? "FAIL" : "OK") << std::endl;
-
-	return 0;
+	return boumc_simple(env, aig);
 }
