@@ -16,7 +16,7 @@ RCOBJS    = $(addsuffix r,  $(COBJS))
 EXEC      = minisat
 
 CXX       = g++
-CFLAGS    = -Wall -ffloat-store
+CFLAGS    = -Wall -ffloat-store -g
 COPTIMIZE = -O3
 
 
@@ -78,7 +78,7 @@ libminisat.a: File.o Proof.o Solver.o
 	@ar rcs $@ $^
 	@ranlib $@
 	@ranlib $@
-	@strip $@
+	#strip $@
 
 ## Make dependencies
 depend:	depend.mak

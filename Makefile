@@ -7,22 +7,18 @@ RM ?= rm -f
 # CFLAGS = -fsanitize=address
 # LFLAGS = -fsanitize=address
 
+MINISAT := MiniSat-p_v1.14
+
 CFLAGS := -g -Wall -O3 $(CFLAGS)
 CXXFLAGS := -std=c++11 $(CXXFLAGS)
-LFLAGS := $(LFLAGS)
+LFLAGS := -g $(LFLAGS)
 
-LIBS := MiniSat-p_v1.14/Solver.o MiniSat-p_v1.14/Proof.o MiniSat-p_v1.14/File.o $(LIBS)
+LIBS := $(MINISAT)/libminisat.a $(LIBS)
 
 all: boumc
 
-MiniSat-p_v1.14/Solver.o:
-	cd MiniSat-p_v1.14 && $(MAKE) Solver.o
-
-MiniSat-p_v1.14/Proof.o:
-	cd MiniSat-p_v1.14 && $(MAKE) Proof.o
-
-MiniSat-p_v1.14/File.o:
-	cd MiniSat-p_v1.14 && $(MAKE) File.o
+$(MINISAT)/libminisat.a:
+	cd $(MINISAT) && $(MAKE) libminisat.a
 
 boumc: aag.o main.o formula.o $(LIBS)
 	$(CXX) $(LFLAGS) -o $@ $^
@@ -35,6 +31,6 @@ test:
 
 clean:
 	$(RM) *.o
-	cd MiniSat-p_v1.14 && $(MAKE) clean
+	cd $(MINISAT) && $(MAKE) clean
 
 .PHONY: all clean tests
