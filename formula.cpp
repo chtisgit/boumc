@@ -513,7 +513,7 @@ auto Formula::Concat(Formula *f1, Formula *f2, char op) -> Formula *
 auto Formula::SimplifyNegations(Formula *f) -> Formula*
 {
 	auto n = dynamic_cast<Negate *>(f);
-	if (n != nullptr) {
+	if (n != nullptr) {		
 		auto innerN = dynamic_cast<Negate*>(n->f);
 		if(innerN != nullptr){
 			auto res = innerN->f;
@@ -525,21 +525,28 @@ auto Formula::SimplifyNegations(Formula *f) -> Formula*
 
 		auto innerT = dynamic_cast<True*>(n->f);
 		if(innerT != nullptr){
+			n->Free();
 			return &FalseVal;
 		}
 
 		auto innerF = dynamic_cast<False*>(n->f);
 		if(innerF != nullptr){
+			n->Free();
 			return &TrueVal;
 		}
 		
-		SimplifyNegations(n->f);
+		n->f = SimplifyNegations(n->f);
 	}
 
 	auto b = dynamic_cast<BinaryOp *>(f);
 	if (b != nullptr) {
 		b->ff[0] = SimplifyNegations(b->ff[0]);
 		b->ff[1] = SimplifyNegations(b->ff[1]);
+	}
+
+	auto l = dynamic_cast<Latch*>(f);
+	if(l != nullptr && l->f != nullptr) {
+		l->f = SimplifyNegations(l->f);
 	}
 
 	return f;

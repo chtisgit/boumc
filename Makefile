@@ -1,6 +1,6 @@
 
 SHELL ?= /bin/sh
-CXX ?= clang++
+CXX ?= g++
 RM ?= rm -f
 
 # asan

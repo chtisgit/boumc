@@ -2,5 +2,5 @@
     2                           input 0 
     4 2                         latch 0
     6 4                         latch 1
-    8 6
-    8                           output 0
+    8 6                         latch 2
+    9                           output 0
