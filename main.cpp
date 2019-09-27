@@ -103,9 +103,9 @@ struct Trav : public ProofTraverser {
 	void print(std::ostream &out)
 	{
 		out << "Proof: " << std::endl;
-		for (size_t i = 0; i < clauses.size(); i++) {
+		for (int i = 0; i < clauses.size(); i++) {
 			out << "Clause " << (i + 1) << ": ";
-			for (size_t j = 0; j < clauses[i].size(); j++) {
+			for (int j = 0; j < clauses[i].size(); j++) {
 				out << var(clauses[i][j]) << ' ';
 			}
 			out << std::endl;
