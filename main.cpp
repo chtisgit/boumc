@@ -11,9 +11,10 @@
 struct Env {
 	int K = -1;
 	int Debug = 0;
-	bool ParserTest = false;
 	std::istream *inputstream = &std::cin;
 	std::ifstream file;
+	bool ParserTest = false;
+	bool ShowProof = false;
 };
 
 const char USAGE[] =
@@ -21,6 +22,7 @@ const char USAGE[] =
     "-d[level]             include debug output (optionally, specify debug level)\n"
     "-k <steps>             # of steps the model checker will unwind (default k=0)\n"
     "-f <file path>         read from a file instead of console\n"
+    "-p | --proof           show proof\n"
     "--parse-only           Only parse ASCII AIGer file (for testing)\n";
 
 auto usage(const char *prog) -> void
@@ -30,8 +32,10 @@ auto usage(const char *prog) -> void
 
 auto parseArgs(int argc, char **argv) -> Env
 {
-	static option long_options[] = {
-	    {"parse-only", no_argument, 0, 0}, {"help", no_argument, 0, 0}, {0, 0, 0, 0}};
+	static option long_options[] = {{"parse-only", no_argument, 0, 0},
+					{"help", no_argument, 0, 0},
+					{"proof", no_argument, 0, 'p'},
+					{0, 0, 0, 0}};
 	Env e;
 	while (1) {
 		int option_index = 0, c;
@@ -74,13 +78,16 @@ auto parseArgs(int argc, char **argv) -> Env
 			e.file.open(optarg);
 			if (e.file.fail()) {
 				std::cout << "error: cannot open file '" << optarg << "'"
-				          << std::endl;
+					  << std::endl;
 				exit(1);
 			}
 
 			e.inputstream = &e.file;
 
 			break;
+
+		case 'p':
+			e.ShowProof = true;
 		}
 	}
 
@@ -106,7 +113,8 @@ struct Trav : public ProofTraverser {
 		for (int i = 0; i < clauses.size(); i++) {
 			out << "Clause " << (i + 1) << ": ";
 			for (int j = 0; j < clauses[i].size(); j++) {
-				out << var(clauses[i][j]) << ' ';
+				out << (sign(clauses[i][j]) ? "-" : "") << var(clauses[i][j])
+				    << ' ';
 			}
 			out << std::endl;
 		}
@@ -118,9 +126,9 @@ struct Trav : public ProofTraverser {
 		int size = v.size();
 		T *data = v.release();
 		std::sort(data, data + size, lt);
-		std::unique(data, data + size);
+		auto end = std::unique(data, data + size);
 		v.~vec<T>();
-		new (&v) vec<T>(data, size);
+		new (&v) vec<T>(data, end - data);
 	}
 
 	template <class T>
@@ -239,8 +247,7 @@ auto boumc_simple(const Env &env, const AIG &aig) -> int
 		clause->Free();
 	}
 
-	if (env.Debug)
-		std::cout << "Running SAT solver..." << std::endl;
+	std::cout << "Running SAT solver..." << std::endl;
 	s.solve();
 
 	// s.okay()  == true =>  SAT
@@ -248,7 +255,7 @@ auto boumc_simple(const Env &env, const AIG &aig) -> int
 	// SAT => E  a path to a Bad State.
 	std::cout << std::endl << (s.okay() ? "FAIL" : "OK") << std::endl;
 
-	if (env.Debug)
+	if (env.ShowProof)
 		trav.print(std::cout);
 
 	return 0;
