@@ -7,6 +7,7 @@
 
 #include "aag.h"
 #include "formula.h"
+#include "translate.h"
 
 struct Env {
 	int K = -1;
@@ -15,6 +16,7 @@ struct Env {
 	std::ifstream file;
 	bool ParserTest = false;
 	bool ShowProof = false;
+	bool PrintDIMACS = false;
 };
 
 const char USAGE[] =
@@ -34,6 +36,7 @@ auto parseArgs(int argc, char **argv) -> Env
 {
 	static option long_options[] = {{"parse-only", no_argument, 0, 0},
 					{"help", no_argument, 0, 0},
+					{"dimacs", no_argument, 0, 0},
 					{"proof", no_argument, 0, 'p'},
 					{0, 0, 0, 0}};
 	Env e;
@@ -44,14 +47,18 @@ auto parseArgs(int argc, char **argv) -> Env
 		if (c == -1)
 			break;
 
-		switch (c) {
-		case 0:
-			if (option_index == 0) {
-				e.ParserTest = true;
-			} else if (option_index == 1) {
-				usage(argv[0]);
-				exit(0);
-			}
+		switch (c + (c == 0 ? option_index : 0)) {
+		case 0: // --parse-only
+			e.ParserTest = true;
+			break;
+
+		case 1: // --help
+			usage(argv[0]);
+			exit(0);
+			break;
+		
+		case 2: // --dimacs
+			e.PrintDIMACS = true;
 			break;
 
 		case 'd':
@@ -198,69 +205,6 @@ struct Trav : public ProofTraverser {
 	}
 };
 
-auto boumc_simple(const Env &env, const AIG &aig) -> int
-{
-	// the outputs of the circuit represent the properties that are to be checked.
-	// create a (P1 | P2 | ...) clause
-	auto f = Formula::FromAIG(aig, aig.outputs[0])->Invert();
-	for (size_t i = 1; i != aig.outputs.size(); i++) {
-		const auto p = Formula::FromAIG(aig, aig.outputs[i])->Invert();
-		f = Formula::Concat(f, p, '&');
-	}
-
-	for (int k = 1; k <= env.K; k++) {
-		Formula::Unwind(aig, f);
-	}
-	f = Formula::SimplifyNegations(Formula::RemoveLatches(f));
-
-	if (env.Debug) {
-		std::cout << "Formula: " << f->String() << std::endl;
-	}
-
-	auto cnf = Formula::TseitinTransform(f, aig.lastLit + 2);
-	f->Free();
-
-	if (env.Debug >= 3) {
-		std::cout << "Individual CNF Clauses:" << std::endl;
-		int c = 1;
-		for (auto f : cnf) {
-			std::cout << "[" << (c++) << "] " << f->String() << std::endl;
-		}
-		std::cout << std::endl;
-	}
-
-	Trav trav;
-
-	Solver s;
-	// proof needs to be assigned before newVar() is called on the Solver...
-	s.proof = new Proof(trav);
-
-	const auto varmap = Formula::ToSolver(s, cnf);
-	if (env.Debug >= 3) {
-		std::cout << "Translation map:" << std::endl;
-		for (const auto &entry : varmap) {
-			std::cout << "  " << entry.first << " -> " << entry.second << std::endl;
-		}
-	}
-
-	for (auto clause : cnf) {
-		clause->Free();
-	}
-
-	std::cout << "Running SAT solver..." << std::endl;
-	s.solve();
-
-	// s.okay()  == true =>  SAT
-	// s.okay() == false => UNSAT
-	// SAT => E  a path to a Bad State.
-	std::cout << std::endl << (s.okay() ? "FAIL" : "OK") << std::endl;
-
-	if (env.ShowProof)
-		trav.print(std::cout);
-
-	return 0;
-}
-
 auto main(int argc, char **argv) -> int
 {
 	auto env = parseArgs(argc, argv);
@@ -279,5 +223,41 @@ auto main(int argc, char **argv) -> int
 	std::cout << "outputs " << aig.outputs.size() << std::endl;
 	std::cout << "K = " << env.K << std::endl;
 
-	return boumc_simple(env, aig);
+	Solver s;
+
+	if(env.PrintDIMACS) {
+		DimacsCNFer cnfer(std::cout);
+		AIGtoSATer ats(aig, cnfer, env.K);
+		ats.toSAT();
+		return 0;
+	}
+
+	try {
+		SolverCNFer cnfer(s);
+		AIGtoSATer ats(aig, cnfer, env.K);
+		ats.toSAT();
+	}catch(TranslationError& err) {
+		std::cout << "translation error: " << err.what() << std::endl << std::endl;
+		return 1;
+	}catch(std::exception& err) {
+		std::cout << "error: " << err.what() << std::endl << std::endl;
+		return 1;
+	}
+
+	//Trav trav;
+	// proof needs to be assigned before newVar() is called on the Solver...
+	//s.proof = new Proof(trav);
+
+	std::cout << "Running SAT solver..." << std::endl;
+	s.solve();
+
+	// s.okay()  == true =>  SAT
+	// s.okay() == false => UNSAT
+	// SAT => E  a path to a Bad State.
+	std::cout << std::endl << (s.okay() ? "FAIL" : "OK") << std::endl;
+
+	//if (env.ShowProof)
+	//	trav.print(std::cout);
+
+	return 0;
 }

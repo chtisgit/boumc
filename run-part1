@@ -1,0 +1,8 @@
+#!/bin/sh
+
+filename="$1"
+k="$2"
+
+make 2>&1 >/dev/null
+./boumc -f "$filename" -k "$k" | tail -1
+

@@ -1,0 +1,10 @@
+aag 10 1 6 1 1
+2                           input 0
+4 2                         latch 0a
+6 4                         latch 1a
+8 6                         latch 2a
+10  3                       latch 0b
+12 11                       latch 1b
+14 13                       latch 2b
+16                          output 0
+16 15 8                     and gate 0 

@@ -20,7 +20,7 @@ all: boumc
 $(MINISAT)/libminisat.a:
 	cd $(MINISAT) && $(MAKE) libminisat.a
 
-boumc: aag.o main.o formula.o $(LIBS)
+boumc: aag.o main.o translate.o $(LIBS)
 	$(CXX) $(LFLAGS) -o $@ $^
 
 %.o: %.cpp
