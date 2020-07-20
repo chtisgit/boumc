@@ -6,7 +6,6 @@
 #include <getopt.h>
 
 #include "aag.h"
-#include "formula.h"
 #include "translate.h"
 
 struct Env {
