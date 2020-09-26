@@ -42,7 +42,7 @@ auto parseArgs(int argc, char **argv) -> Env
 	while (1) {
 		int option_index = 0, c;
 
-		c = getopt_long(argc, argv, "d::f:k:", long_options, &option_index);
+		c = getopt_long(argc, argv, "d::f:k:p", long_options, &option_index);
 		if (c == -1)
 			break;
 
@@ -94,6 +94,7 @@ auto parseArgs(int argc, char **argv) -> Env
 
 		case 'p':
 			e.ShowProof = true;
+			break;
 		}
 	}
 
@@ -231,6 +232,10 @@ auto main(int argc, char **argv) -> int
 		return 0;
 	}
 
+	Trav trav;
+	// proof needs to be assigned before newVar() is called on the Solver...
+	s.proof = new Proof(trav);
+
 	try {
 		SolverCNFer cnfer(s);
 		AIGtoSATer ats(aig, cnfer, env.K);
@@ -243,10 +248,6 @@ auto main(int argc, char **argv) -> int
 		return 1;
 	}
 
-	//Trav trav;
-	// proof needs to be assigned before newVar() is called on the Solver...
-	//s.proof = new Proof(trav);
-
 	std::cout << "Running SAT solver..." << std::endl;
 	s.solve();
 
@@ -255,8 +256,8 @@ auto main(int argc, char **argv) -> int
 	// SAT => E  a path to a Bad State.
 	std::cout << std::endl << (s.okay() ? "FAIL" : "OK") << std::endl;
 
-	//if (env.ShowProof)
-	//	trav.print(std::cout);
+	if (env.ShowProof)
+		trav.print(std::cout);
 
 	return 0;
 }
