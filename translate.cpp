@@ -10,6 +10,8 @@ TranslationError::~TranslationError()
 {
 }
 
+TranslationError ErrCannotTranslateVar{"VarTranslator: cannot translate var"};
+
 VarTranslator::VarTranslator(CNFer &s) : s(s)
 {
 	auto falseLit = Lit(s.newVar(), false);
@@ -36,6 +38,9 @@ auto VarTranslator::toLit(int var, int step) -> Lit
 	return sgn ? ~it->second : it->second;
 };
 
+TranslationError ErrNegatedOutput{"AIGtoSATer: outputs are expected to be non-negated"};
+TranslationError ErrOutputNotSingular{"AIGtoSATer: only exactly one output is supported"};
+
 AIGtoSATer::AIGtoSATer(const AIG &aig, CNFer &s, int k) : aig(aig), s(s), vars(s), k(k)
 {
 }
@@ -48,7 +53,7 @@ void AIGtoSATer::andgates(int step)
 		auto z = vars.toLit(gate.in2, step);
 
 		if (gate.out % 2 != 0) {
-			throw TranslationError("outputs are expected to be non-negated");
+			throw ErrNegatedOutput;
 		}
 
 		s.addBinary(~x, y);
@@ -62,7 +67,7 @@ void AIGtoSATer::I()
 	// Initial latch output is zero.
 	for (const auto &latch : aig.latches) {
 		if (latch.first % 2 != 0) {
-			throw TranslationError("outputs are expected to be non-negated");
+			throw ErrNegatedOutput;
 		}
 
 		// std::cout << "var " << latch.first << "_0 <- 0 (Latch output, input = "
@@ -89,7 +94,7 @@ void AIGtoSATer::T(int step)
 void AIGtoSATer::toSAT()
 {
 	if (aig.outputs.size() != 1) {
-		throw TranslationError("only exactly one output is supported");
+		throw ErrOutputNotSingular;
 	}
 
 	I();

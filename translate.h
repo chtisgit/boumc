@@ -115,6 +115,8 @@ public:
 	}
 };
 
+extern TranslationError ErrCannotTranslateVar;
+
 class VarTranslator {
 	CNFer &s;
 	std::map<std::pair<int, int>, Lit> varmap;
@@ -123,6 +125,9 @@ public:
 	explicit VarTranslator(CNFer &s);
 	auto toLit(int var, int step) -> Lit;
 };
+
+extern TranslationError ErrNegatedOutput;
+extern TranslationError ErrOutputNotSingular;
 
 class AIGtoSATer {
 	const AIG &aig;
