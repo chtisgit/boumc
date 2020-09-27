@@ -16,6 +16,7 @@ struct Env {
 	bool ParserTest = false;
 	bool ShowProof = false;
 	bool PrintDIMACS = false;
+	bool Interpolation = false;
 };
 
 const char USAGE[] =
@@ -37,12 +38,13 @@ auto parseArgs(int argc, char **argv) -> Env
 					{"help", no_argument, 0, 0},
 					{"dimacs", no_argument, 0, 0},
 					{"proof", no_argument, 0, 'p'},
+					{"interpolate", no_argument, 0, 'i'},
 					{0, 0, 0, 0}};
 	Env e;
 	while (1) {
 		int option_index = 0, c;
 
-		c = getopt_long(argc, argv, "d::f:k:p", long_options, &option_index);
+		c = getopt_long(argc, argv, "d::f:ik:p", long_options, &option_index);
 		if (c == -1)
 			break;
 
@@ -70,6 +72,10 @@ auto parseArgs(int argc, char **argv) -> Env
 			if (e.Debug <= 0) {
 				e.Debug = 1;
 			}
+			break;
+
+		case 'i':
+			e.Interpolation = true;
 			break;
 
 		case 'k':
@@ -107,20 +113,28 @@ auto parseArgs(int argc, char **argv) -> Env
 	return e;
 }
 
+const char NodeRoot[] = "root";
+const char NodeChain[] = "chain";
+
+struct Node {
+	const char *type;
+	vec<Lit> lit;
+};
+
 // A "listner" for the proof. Proof events will be passed onto (online mode) or replayed to
 // (offline mode) this class.  Each call to 'root()' or 'chain()' produces a new clause. The first
 // clause has ID 0, the next 1 and so on. These are the IDs passed to 'chain()'s 'cs' parameter.
 //
 struct Trav : public ProofTraverser {
-	vec<vec<Lit>> clauses;
+	vec<Node> clauses;
 
 	void print(std::ostream &out)
 	{
 		out << "Proof: " << std::endl;
 		for (int i = 0; i < clauses.size(); i++) {
 			out << "Clause " << (i + 1) << ": ";
-			for (int j = 0; j < clauses[i].size(); j++) {
-				out << (sign(clauses[i][j]) ? "-" : "") << var(clauses[i][j])
+			for (int j = 0; j < clauses[i].lit.size(); j++) {
+				out << (sign(clauses[i].lit[j]) ? "-" : "") << var(clauses[i].lit[j])
 				    << ' ';
 			}
 			out << std::endl;
@@ -128,20 +142,30 @@ struct Trav : public ProofTraverser {
 	}
 
 	template <class T, class LessThan>
-	static void sortUnique(vec<T> &v, LessThan lt)
+	static void sortUnique(vec<T>& v, LessThan lt)
 	{
-		int size = v.size();
-		T *data = v.release();
-		std::sort(data, data + size, lt);
-		auto end = std::unique(data, data + size);
+		int     size = v.size();
+		T*      data = v.release();
+		std::sort(data, data+size, lt);
+		std::unique(data, data+size);
 		v.~vec<T>();
-		new (&v) vec<T>(data, end - data);
+		new (&v) vec<T>(data, size);
 	}
 
 	template <class T>
-	static void sortUnique(vec<T> &v)
+	static void sortUnique(vec<T>& v)
 	{
 		sortUnique(v, std::less<T>());
+	}
+
+
+	auto newClause(const char *type) -> Node&
+	{
+		clauses.push();
+		auto& n = clauses.last();
+		n.type = type;
+
+		return n;
 	}
 
 	static void resolve(vec<Lit> &main, vec<Lit> &other, Var x)
@@ -177,22 +201,21 @@ struct Trav : public ProofTraverser {
 
 	void root(const vec<Lit> &c)
 	{
-		clauses.push();
-		c.copyTo(clauses.last());
+		c.copyTo(newClause(NodeRoot).lit);
 	}
 
 	void chain(const vec<ClauseId> &cs, const vec<Var> &xs)
 	{
 		clauses.push();
-		vec<Lit> &c = clauses.last();
-		clauses[cs[0]].copyTo(c);
-		for (int i = 0; i < xs.size(); i++)
-			this->resolve(c, clauses[cs[i + 1]], xs[i]);
+		auto& n = newClause(NodeChain);
+		clauses[cs[0]].lit.copyTo(n.lit);
+        for (int i = 0; i < xs.size(); i++)
+            resolve(n.lit, clauses[cs[i+1]].lit, xs[i]);
 	}
 
 	void deleted(ClauseId c)
 	{
-		clauses[c].clear();
+		clauses[c].lit.clear();
 	}
 
 	virtual void done()
@@ -204,6 +227,13 @@ struct Trav : public ProofTraverser {
 	{
 	}
 };
+
+auto createSolverWithTraverser(ProofTraverser *trav) -> std::unique_ptr<CNFer>
+{
+	auto s = std::make_unique<SolverCNFer>();
+	s->withProofTraverser(trav);
+	return s;
+}
 
 auto main(int argc, char **argv) -> int
 {
@@ -223,23 +253,27 @@ auto main(int argc, char **argv) -> int
 	std::cout << "outputs " << aig.outputs.size() << std::endl;
 	std::cout << "K = " << env.K << std::endl;
 
-	Solver s;
-
 	if(env.PrintDIMACS) {
 		DimacsCNFer cnfer(std::cout);
-		AIGtoSATer ats(aig, cnfer, env.K);
-		ats.toSAT();
+		AIGtoSATer ats(aig, nullptr);
+		VarTranslator vars(cnfer);
+		ats.toSAT(cnfer, vars, env.K);
 		return 0;
 	}
 
-	Trav trav;
-	// proof needs to be assigned before newVar() is called on the Solver...
-	s.proof = new Proof(trav);
-
 	try {
-		SolverCNFer cnfer(s);
-		AIGtoSATer ats(aig, cnfer, env.K);
-		ats.toSAT();
+		AIGtoSATer ats(aig, createSolverWithTraverser);
+
+		if(env.Interpolation)
+			ats.enableInterpolation();
+		
+		// true =>  SAT
+		// false => UNSAT
+		// SAT => E  a path to a Bad State.
+		bool badstate = ats.check(env.K);
+
+		std::cout << std::endl << (badstate ? "FAIL" : "OK") << std::endl;
+
 	}catch(TranslationError& err) {
 		std::cout << "translation error: " << err.what() << std::endl << std::endl;
 		return 1;
@@ -247,17 +281,6 @@ auto main(int argc, char **argv) -> int
 		std::cout << "error: " << err.what() << std::endl << std::endl;
 		return 1;
 	}
-
-	std::cout << "Running SAT solver..." << std::endl;
-	s.solve();
-
-	// s.okay()  == true =>  SAT
-	// s.okay() == false => UNSAT
-	// SAT => E  a path to a Bad State.
-	std::cout << std::endl << (s.okay() ? "FAIL" : "OK") << std::endl;
-
-	if (env.ShowProof)
-		trav.print(std::cout);
 
 	return 0;
 }

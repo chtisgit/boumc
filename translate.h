@@ -2,6 +2,7 @@
 
 #include <exception>
 #include <map>
+#include <memory>
 
 #include "MiniSat-p_v1.14/Solver.h"
 #include "aag.h"
@@ -22,13 +23,10 @@ struct CNFer {
 };
 
 class SolverCNFer : public CNFer {
-	Solver &s;
+	Solver s;
+	ProofTraverser *pt;
 
 public:
-	SolverCNFer(Solver &s) : s(s)
-	{
-	}
-
 	virtual ~SolverCNFer()
 	{
 	}
@@ -56,6 +54,22 @@ public:
 	virtual Var newVar()
 	{
 		return s.newVar();
+	}
+
+	Solver& solver()
+	{
+		return s;
+	}
+
+	void withProofTraverser(ProofTraverser* trav) {
+		pt = nullptr;
+		s.proof = nullptr;
+		if(trav == nullptr)
+			return;
+
+		// proof needs to be assigned before newVar() is called on the Solver...
+		s.proof = new Proof{*trav};
+		pt = trav;
 	}
 };
 
@@ -129,18 +143,25 @@ public:
 extern TranslationError ErrNegatedOutput;
 extern TranslationError ErrOutputNotSingular;
 
+using CreateSolverFunc = std::unique_ptr<CNFer> (*)(ProofTraverser*);
+
 class AIGtoSATer {
 	const AIG &aig;
-	CNFer &s;
-	VarTranslator vars;
-	const int k;
+	CreateSolverFunc newSolver;
+	bool interpolation = false;
 
-	void andgates(int step);
-	void I();
-	void T(int step);
+	void andgates(CNFer& s, VarTranslator& vars, int step);
+	bool mcmillanMC(int k);
+	bool classicMC(int k);
 
 public:
-	AIGtoSATer(const AIG &aig, CNFer &s, int k);
+	AIGtoSATer(const AIG &aig, CreateSolverFunc newSolver);
 
-	void toSAT();
+	void I(CNFer& s, VarTranslator& vars);
+	void T(CNFer& s, VarTranslator& vars, int step);
+	void toSAT(CNFer& s, VarTranslator& vars, int k);
+
+	void enableInterpolation();
+
+	bool check(int k);
 };

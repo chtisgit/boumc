@@ -41,11 +41,11 @@ auto VarTranslator::toLit(int var, int step) -> Lit
 TranslationError ErrNegatedOutput{"AIGtoSATer: outputs are expected to be non-negated"};
 TranslationError ErrOutputNotSingular{"AIGtoSATer: only exactly one output is supported"};
 
-AIGtoSATer::AIGtoSATer(const AIG &aig, CNFer &s, int k) : aig(aig), s(s), vars(s), k(k)
+AIGtoSATer::AIGtoSATer(const AIG &aig, CreateSolverFunc newSolver) : aig(aig), newSolver(newSolver)
 {
 }
 
-void AIGtoSATer::andgates(int step)
+void AIGtoSATer::andgates(CNFer& s, VarTranslator& vars, int step)
 {
 	for (const auto &gate : aig.gates) {
 		auto x = vars.toLit(gate.out, step);
@@ -62,7 +62,7 @@ void AIGtoSATer::andgates(int step)
 	}
 }
 
-void AIGtoSATer::I()
+void AIGtoSATer::I(CNFer& s, VarTranslator& vars)
 {
 	// Initial latch output is zero.
 	for (const auto &latch : aig.latches) {
@@ -75,10 +75,10 @@ void AIGtoSATer::I()
 		s.addUnit(~vars.toLit(latch.first, 0));
 	}
 
-	andgates(0);
+	andgates(s, vars, 0);
 }
 
-void AIGtoSATer::T(int step)
+void AIGtoSATer::T(CNFer& s, VarTranslator& vars, int step)
 {
 	// Latch transition function: q(n+1) <-> d(n).
 	for (const auto &latch : aig.latches) {
@@ -88,19 +88,18 @@ void AIGtoSATer::T(int step)
 		s.addBinary(vars.toLit(latch.first, step + 1), ~vars.toLit(latch.second, step));
 	}
 
-	andgates(step + 1);
+	andgates(s, vars, step + 1);
 }
 
-void AIGtoSATer::toSAT()
-{
+void AIGtoSATer::toSAT(CNFer& s, VarTranslator& vars, int k) {
 	if (aig.outputs.size() != 1) {
 		throw ErrOutputNotSingular;
 	}
 
-	I();
+	I(s, vars);
 
 	for (int i = 0; i != k; i++) {
-		T(i);
+		T(s, vars, i);
 	}
 
 	vec<Lit> clause(k + 1);
@@ -108,4 +107,37 @@ void AIGtoSATer::toSAT()
 		clause[i] = vars.toLit(aig.outputs[0], i);
 	}
 	s.addClause(clause);
+}
+
+void AIGtoSATer::enableInterpolation() {
+	interpolation = true;
+}
+
+bool AIGtoSATer::mcmillanMC(int k)
+{
+	throw std::runtime_error("not implemented");
+}
+
+bool AIGtoSATer::classicMC(int k)
+{
+	auto s = newSolver(nullptr);
+	VarTranslator vars{*s};
+
+	toSAT(*s, vars, k);
+
+	auto *scnfer = dynamic_cast<SolverCNFer*>(s.get());
+	if(scnfer == nullptr)
+		return false;
+
+	return scnfer->solver().solve();
+}
+
+
+bool AIGtoSATer::check(int k)
+{
+	if(interpolation){
+		return mcmillanMC(k);
+	}
+
+	return classicMC(k);
 }

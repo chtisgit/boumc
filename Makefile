@@ -10,7 +10,7 @@ RM ?= rm -f
 MINISAT := MiniSat-p_v1.14
 
 CFLAGS := -g -Wall -O3 $(CFLAGS)
-CXXFLAGS := -std=c++11 $(CXXFLAGS)
+CXXFLAGS := -std=c++14 $(CXXFLAGS)
 LFLAGS := -g $(LFLAGS)
 
 LIBS := $(MINISAT)/libminisat.a $(LIBS)
