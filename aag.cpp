@@ -96,7 +96,7 @@ auto AIG::FromStream(std::istream &in) -> AIG
 	if (!matchMagic(in))
 		throw std::runtime_error("not AIGer ASCII format!");
 
-	const auto maxVarInd = readnum(in);
+	const auto maxVarInd = 2*readnum(in);
 	skipwhite(in);
 	const auto inputLines = readnum(in);
 	skipwhite(in);
@@ -111,24 +111,33 @@ auto AIG::FromStream(std::istream &in) -> AIG
 	AIG aig;
 	aig.lastLit = maxVarInd;
 
+	auto rec = [&aig](std::initializer_list<int> list) {
+		aig.lastLit = std::max(std::max(list), aig.lastLit);
+	};
+
 	int count;
 	for (count = inputLines; !in.eof() && count != 0; --count) {
-		readline(in, 1, [&](const std::vector<int> &v) { aig.inputs.push_back(v[0]); });
+		readline(in, 1, [&](const std::vector<int> &v) { aig.inputs.push_back(v[0]); rec({v[0]}); });
 	}
 
 	for (count = stateLines; !in.eof() && count != 0; --count) {
 		readline(in, 2,
-		         [&](const std::vector<int> &v) { aig.latches.emplace_back(v[0], v[1]); });
+		         [&](const std::vector<int> &v) { aig.latches.emplace_back(v[0], v[1]); rec({v[0], v[1]}); });
 	}
 
 	for (count = outputLines; !in.eof() && count != 0; --count) {
-		readline(in, 1, [&](const std::vector<int> &v) { aig.outputs.push_back(v[0]); });
+		readline(in, 1, [&](const std::vector<int> &v) { aig.outputs.push_back(v[0]); rec({v[0]}); });
 	}
 
 	for (count = gateLines; !in.eof() && count != 0; --count) {
 		readline(in, 3, [&](const std::vector<int> &v) {
 			aig.gates.emplace_back(v[0], v[1], v[2]);
+			 rec({v[0], v[1], v[2]});
 		});
+	}
+
+	if (aig.lastLit > maxVarInd) {
+		std::cout << "warning: the number of variables is not correct in your aag file! (" << maxVarInd << " given, " << aig.lastLit << " correct)" << std::endl;
 	}
 
 	return aig;
