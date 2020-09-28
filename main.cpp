@@ -1,4 +1,3 @@
-#include <algorithm>
 #include <fstream>
 #include <iostream>
 
@@ -21,7 +20,8 @@ struct Env {
 
 const char USAGE[] =
     " -k <steps> [-d <level>] [-f <file>] [--parse-only]\n\n"
-    "-d[level]             include debug output (optionally, specify debug level)\n"
+    "-d[level]              include debug output (optionally, specify debug level)\n"
+	"--dimacs               print CNF of classical BMC check in DIMACS format\n"
     "-k <steps>             # of steps the model checker will unwind (default k=0)\n"
     "-f <file path>         read from a file instead of console\n"
     "-p | --proof           show proof\n"
@@ -113,125 +113,15 @@ auto parseArgs(int argc, char **argv) -> Env
 	return e;
 }
 
-const char NodeRoot[] = "root";
-const char NodeChain[] = "chain";
-
-struct Node {
-	const char *type;
-	vec<Lit> lit;
-};
-
-// A "listner" for the proof. Proof events will be passed onto (online mode) or replayed to
-// (offline mode) this class.  Each call to 'root()' or 'chain()' produces a new clause. The first
-// clause has ID 0, the next 1 and so on. These are the IDs passed to 'chain()'s 'cs' parameter.
-//
-struct Trav : public ProofTraverser {
-	vec<Node> clauses;
-
-	void print(std::ostream &out)
-	{
-		out << "Proof: " << std::endl;
-		for (int i = 0; i < clauses.size(); i++) {
-			out << "Clause " << (i + 1) << ": ";
-			for (int j = 0; j < clauses[i].lit.size(); j++) {
-				out << (sign(clauses[i].lit[j]) ? "-" : "") << var(clauses[i].lit[j])
-				    << ' ';
-			}
-			out << std::endl;
-		}
-	}
-
-	template <class T, class LessThan>
-	static void sortUnique(vec<T>& v, LessThan lt)
-	{
-		int     size = v.size();
-		T*      data = v.release();
-		std::sort(data, data+size, lt);
-		std::unique(data, data+size);
-		v.~vec<T>();
-		new (&v) vec<T>(data, size);
-	}
-
-	template <class T>
-	static void sortUnique(vec<T>& v)
-	{
-		sortUnique(v, std::less<T>());
-	}
-
-
-	auto newClause(const char *type) -> Node&
-	{
-		clauses.push();
-		auto& n = clauses.last();
-		n.type = type;
-
-		return n;
-	}
-
-	static void resolve(vec<Lit> &main, vec<Lit> &other, Var x)
-	{
-		Lit p;
-		bool ok1 = false, ok2 = false;
-		for (int i = 0; i < main.size(); i++) {
-			if (var(main[i]) == x) {
-				ok1 = true, p = main[i];
-				main[i] = main.last();
-				main.pop();
-				break;
-			}
-		}
-
-		for (int i = 0; i < other.size(); i++) {
-			if (var(other[i]) != x)
-				main.push(other[i]);
-			else {
-				if (p != ~other[i])
-					printf("PROOF ERROR! Resolved on variable with SAME "
-					       "polarity in both clauses: %d\n",
-					       x + 1);
-				ok2 = true;
-			}
-		}
-
-		if (!ok1 || !ok2)
-			printf("PROOF ERROR! Resolved on missing variable: %d\n", x + 1);
-
-		sortUnique(main);
-	}
-
-	void root(const vec<Lit> &c)
-	{
-		c.copyTo(newClause(NodeRoot).lit);
-	}
-
-	void chain(const vec<ClauseId> &cs, const vec<Var> &xs)
-	{
-		clauses.push();
-		auto& n = newClause(NodeChain);
-		clauses[cs[0]].lit.copyTo(n.lit);
-        for (int i = 0; i < xs.size(); i++)
-            resolve(n.lit, clauses[cs[i+1]].lit, xs[i]);
-	}
-
-	void deleted(ClauseId c)
-	{
-		clauses[c].lit.clear();
-	}
-
-	virtual void done()
-	{
-		std::cout << "done()" << std::endl;
-	}
-
-	virtual ~Trav()
-	{
-	}
-};
-
-auto createSolverWithTraverser(ProofTraverser *trav) -> std::unique_ptr<CNFer>
+auto createSolverWithTraverser(ProofTraverser *trav) -> std::unique_ptr<Solver>
 {
-	auto s = std::make_unique<SolverCNFer>();
-	s->withProofTraverser(trav);
+	auto s = std::make_unique<Solver>();
+	s->proof = nullptr;
+	
+	// proof needs to be assigned before newVar() is called on the Solver...
+	if(trav != nullptr)
+		s->proof = new Proof{*trav};
+
 	return s;
 }
 
@@ -254,9 +144,14 @@ auto main(int argc, char **argv) -> int
 	std::cout << "K = " << env.K << std::endl;
 
 	if(env.PrintDIMACS) {
+		if (env.Interpolation) {
+			std::cout << "Cannot print DIMACS for interpolation method, sry." << std::endl;
+			return 0;
+		}
+
 		DimacsCNFer cnfer(std::cout);
 		AIGtoSATer ats(aig, nullptr);
-		VarTranslator vars(cnfer);
+		VarTranslator vars(&cnfer, aig.lastLit, env.K);
 		ats.toSAT(cnfer, vars, env.K);
 		return 0;
 	}
