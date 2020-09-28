@@ -167,11 +167,14 @@ public:
     vec(T* array, int size)     : data(array), sz(size), cap(size) { }      // (takes ownership of array -- will be deallocated with 'xfree()')
    ~vec(void)                                                      { clear(true); }
 
-    vec(const vec<T>& other) : vec(other.sz)
+    vec(const vec<T>& other) : vec()
     {
-        for(int i = 0; i != sz; i++) {
-            (*this)[i] = other[i];
-        }
+        other.copyTo(*this);
+    }
+
+    vec(vec<T>&& other) : vec()
+    {
+        other.moveTo(*this);
     }
 
 
