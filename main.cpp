@@ -143,20 +143,20 @@ auto main(int argc, char **argv) -> int
 	std::cout << "outputs " << aig.outputs.size() << std::endl;
 	std::cout << "K = " << env.K << std::endl;
 
-	if(env.PrintDIMACS) {
-		if (env.Interpolation) {
-			std::cout << "Cannot print DIMACS for interpolation method, sry." << std::endl;
+	try {
+		if(env.PrintDIMACS) {
+			if (env.Interpolation) {
+				std::cout << "Cannot print DIMACS for interpolation method, sry." << std::endl;
+				return 0;
+			}
+
+			DimacsCNFer cnfer(std::cout);
+			AIGtoSATer ats(aig, nullptr);
+			VarTranslator vars(&cnfer, aig.lastLit, env.K);
+			ats.toSAT(cnfer, vars, env.K);
 			return 0;
 		}
 
-		DimacsCNFer cnfer(std::cout);
-		AIGtoSATer ats(aig, nullptr);
-		VarTranslator vars(&cnfer, aig.lastLit, env.K);
-		ats.toSAT(cnfer, vars, env.K);
-		return 0;
-	}
-
-	try {
 		AIGtoSATer ats(aig, createSolverWithTraverser);
 
 		if(env.Interpolation)
