@@ -24,12 +24,10 @@ struct CNFer {
 
 class VecCNFer : public CNFer {
 	using container_type = vec<vec<Lit>>;
-	container_type &v;
+	container_type v;
 	Var n = 0;
 
 public:
-	VecCNFer(container_type& v) : v(v) {}
-
 	virtual ~VecCNFer() {}
 
 	virtual void addClause(const vec<Lit> &clause)
@@ -63,7 +61,23 @@ public:
 
 	virtual Var newVar()
 	{
-		return ++n;
+		return n++;
+	}
+
+	void copyTo(CNFer& s)
+	{
+		auto sz = v.size();
+		for(int i = 0; i != sz; i++) {
+			s.addClause(v[i]);
+		}
+
+		while (n > s.newVar()) {
+		}
+	}
+
+	auto raw() -> container_type&
+	{
+		return v;
 	}
 };
 
@@ -160,7 +174,7 @@ public:
 
 	virtual Var newVar()
 	{
-		return ++n;
+		return n++;
 	}
 };
 
@@ -174,6 +188,7 @@ class VarTranslator {
 	std::map<std::pair<int,int>, int> m;
 
 public:
+	explicit VarTranslator();
 	explicit VarTranslator(CNFer *s, int numVars, int k);
 	auto reset(CNFer *s, int numVars, int k) -> void;
 	auto toLit(int var, int step) -> Lit;

@@ -14,6 +14,10 @@ TranslationError::~TranslationError()
 
 TranslationError ErrCannotTranslateVar{"VarTranslator: cannot translate var"};
 
+VarTranslator::VarTranslator() : s(nullptr), falseLit(0), first(0), last(0), numVars(0)
+{
+}
+
 VarTranslator::VarTranslator(CNFer *s, int numVars, int k) : numVars(numVars)
 {
 	reset(s, numVars, k);
@@ -29,7 +33,7 @@ auto VarTranslator::reset(CNFer *s, int numVars, int k) -> void
 	falseLit = Lit(first, false);
 	s->addUnit(~falseLit);
 
-	while(s->newVar() != last) {
+	while(s->newVar() < last) {
 	}
 }
 
@@ -150,16 +154,23 @@ struct Trav : public ProofTraverser {
 
 	void root(const vec<Lit> &c)
 	{
+        printf("%d: ROOT", clauses.size()); for (int i = 0; i < c.size(); i++) printf(" %s%d", sign(c[i])?"-":"", var(c[i])+1); printf("\n");
+
 		c.copyTo(newClause(NodeRoot).lit);
 	}
 
 	void chain(const vec<ClauseId> &cs, const vec<Var> &xs)
 	{
+        printf("%d: CHAIN %d", clauses.size(), cs[0]); for (int i = 0; i < xs.size(); i++) printf(" [%d] %d", xs[i]+1, cs[i+1]);
+
 		clauses.push();
-		auto& n = newClause(NodeChain);
-		clauses[cs[0]].lit.copyTo(n.lit);
+		auto& c = newClause(NodeChain);
+		clauses[cs[0]].lit.copyTo(c.lit);
         for (int i = 0; i < xs.size(); i++)
-            resolve(n.lit, clauses[cs[i+1]].lit, xs[i]);
+            resolve(c.lit, clauses[cs[i+1]].lit, xs[i]);
+
+        printf(" =>"); for (int i = 0; i < c.lit.size(); i++) printf(" %s%d", sign(c.lit[i])?"-":"", var(c.lit[i])+1); printf("\n");
+
 	}
 
 	void deleted(ClauseId c)
@@ -259,11 +270,11 @@ void AIGtoSATer::enableInterpolation() {
 
 bool AIGtoSATer::mcmillanMC(int k)
 {
+	VarTranslator vars;
 	{
 		auto s = newSolver(nullptr);
 		SolverCNFer scnfer{*s};
-		VarTranslator vars{&scnfer, aig.lastLit/2, k};
-
+		vars.reset(&scnfer, aig.lastLit/2, k);
 
 		I(scnfer, vars);
 		F(scnfer, vars, 0, 0);
@@ -273,8 +284,25 @@ bool AIGtoSATer::mcmillanMC(int k)
 		}
 	}
 
-	vec<vec<Lit>> R;
+	VecCNFer R;
+	I(R, vars);
 
+	for(auto i = 0;; i++){
+		Trav proofTraverser;
+		auto s = newSolver(&proofTraverser);
+		SolverCNFer scnfer{*s};
+		vars.reset(&scnfer, aig.lastLit/2, k);
+
+		R.copyTo(scnfer);
+		
+		for(auto i = 0; i != k; i++) {
+			T(scnfer, vars, i);
+		}
+
+		F(scnfer, vars, 0, k);
+
+		break;
+	}
 
 	throw std::runtime_error("not implemented");
 }
