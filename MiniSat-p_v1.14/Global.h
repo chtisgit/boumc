@@ -167,6 +167,14 @@ public:
     vec(T* array, int size)     : data(array), sz(size), cap(size) { }      // (takes ownership of array -- will be deallocated with 'xfree()')
    ~vec(void)                                                      { clear(true); }
 
+    vec(const vec<T>& other) : vec(other.sz)
+    {
+        for(int i = 0; i != sz; i++) {
+            (*this)[i] = other[i];
+        }
+    }
+
+
     // Ownership of underlying array:
     T*       release  (void)           { T* ret = data; data = NULL; sz = 0; cap = 0; return ret; }
     operator T*       (void)           { return data; }     // (unsafe but convenient)
