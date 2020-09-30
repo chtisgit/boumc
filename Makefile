@@ -19,7 +19,7 @@ all: boumc
 
 archive: clean boumc.zip
 
-boumc.zip: MiniSat-p_v1.14 *.cpp *.h run-part* Makefile examples tests
+boumc.zip: MiniSat-p_v1.14 *.cpp *.h run-part* Makefile 
 	zip -r boumc-fiedler.zip $^
 
 $(MINISAT)/libminisat.a:
