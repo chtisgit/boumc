@@ -2,8 +2,11 @@
 #include <iostream>
 #include <vector>
 
+// AIG stores an AIGER hardware model. It can be parsed from
+// ASCII AIGER files with the function FromStream.
 struct AIG {
 
+	// And is the internal representation used for an And gate.
 	struct And {
 		int out;
 		int in1, in2;
@@ -24,5 +27,7 @@ struct AIG {
 	auto IsGateOutput(int var) const -> bool;
 	auto IsLatchOutput(int var) const -> bool;
 
+	// reads an ASCII formated AIGER file from the istream and returns an
+	// AIG structure containing the parsed data.
 	static auto FromStream(std::istream &) -> AIG;
 };
