@@ -1,6 +1,8 @@
 #pragma once
 
+#include <algorithm>
 #include <exception>
+#include <functional>
 #include <map>
 #include <memory>
 
@@ -27,8 +29,23 @@ class VecCNFer : public CNFer {
 	container_type v;
 	Var n = 0;
 
+	std::function<Var()> newv;
+
 public:
+	VecCNFer() {};
+	VecCNFer(const std::function<Var()>& newv) : newv(newv) {}
+
+	void swap(VecCNFer &other) {
+		std::swap(v, other.v);
+		std::swap(n, other.n);
+		std::swap(newv, other.newv);
+	}
+
 	virtual ~VecCNFer() {}
+
+	void setNewVar(std::function<Var()>&& newv) {
+		this->newv = newv;
+	}
 
 	virtual void addClause(const vec<Lit> &clause)
 	{
@@ -61,23 +78,103 @@ public:
 
 	virtual Var newVar()
 	{
-		return n++;
+		if(newv) {
+			return n = newv();
+		}
+
+		return ++n;
 	}
 
-	void copyTo(CNFer& s)
+	void copyTo(CNFer& s) const
 	{
-		auto sz = v.size();
-		for(int i = 0; i != sz; i++) {
-			s.addClause(v[i]);
+		for(const auto& clause : v) {
+			s.addClause(clause);
 		}
 
 		while (n > s.newVar()) {
 		}
 	}
 
+	// adds the saved formula as (formula iff lit) to the CNFer. The lit
+	// is returned. When added to the CNFer, it holds an equisatisfiable formula
+	// compared to the one saved.
+	auto copyAsTseitinExpression(CNFer& s) -> Lit {
+		vec<Lit> lits;
+		
+		for(const auto& clause : v) {
+			auto lit = Lit(newVar(), false);
+
+			// every var of clause implies lit
+			for(const auto& x : clause) {
+				s.addBinary(~x, lit);
+			}
+
+			// lit implies the clause
+			auto c{clause};
+			c.push(~lit);
+			s.addClause(c);
+
+			lits.push(lit);
+		}
+
+		if (lits.size() == 1) {
+			return lits[0];
+		}
+
+		auto lit = Lit(newVar(), false);
+		for(const auto& x : lits) {
+			s.addBinary(~lit, x);
+		}
+		
+		for(auto& x : lits) {
+			x = ~x;
+		}
+		lits.push(lit);
+		s.addClause(lits);
+
+		return lit;
+	}
+
 	auto raw() -> container_type&
 	{
 		return v;
+	}
+
+	auto contains(Lit x) const -> bool
+	{
+		const auto xv = var(x);
+		for(const auto& clause : v) {
+			for(const auto lit : clause){
+				if (var(lit) == xv) {
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
+
+	auto containsClause(const vec<Lit>& clause) const -> bool
+	{
+		auto vsz = v.size();
+		for (auto i = 0; i != vsz; i++) {
+			auto visz = v[i].size();
+			if (visz != clause.size())
+				continue;
+			
+			auto ok = true;
+			for (auto j = 0; j != visz; j++) {
+				if (v[i][j] != clause[j]) {
+					ok = false;
+					break;
+				}
+			}
+
+			if(ok)
+				return true;
+		}
+
+		return false;
 	}
 };
 
@@ -87,12 +184,18 @@ class SolverCNFer : public CNFer {
 public:
 	SolverCNFer(Solver &s) : s(s) {}
 
+	void ensureVars(Var upTo) {
+		while(upTo > s.newVar()){}
+	} 
+
 	virtual ~SolverCNFer()
 	{
 	}
 
 	virtual void addClause(const vec<Lit> &v)
 	{
+		assert(v.size() != 0);
+		ensureVars(var(*std::max_element(v.begin(), v.end())));
 		s.addClause(v);
 	}
 
@@ -136,7 +239,7 @@ public:
 
 	void put(Lit x)
 	{
-		o << (sign(x) ? "-" : "") << var(x);
+		o << (sign(x) ? "-" : "") << (var(x)+1);
 	}
 
 	virtual void addClause(const vec<Lit> &v)
@@ -192,16 +295,15 @@ public:
 	explicit VarTranslator(CNFer *s, int numVars, int k);
 	auto reset(CNFer *s, int numVars, int k) -> void;
 	auto toLit(int var, int step) -> Lit;
+	auto False() -> Lit;
+	auto True() -> Lit;
 };
 
 extern TranslationError ErrNegatedOutput;
 extern TranslationError ErrOutputNotSingular;
 
-using CreateSolverFunc = std::unique_ptr<Solver> (*)(ProofTraverser*);
-
 class AIGtoSATer {
 	const AIG &aig;
-	CreateSolverFunc newSolver;
 	bool interpolation = false;
 
 	void andgates(CNFer& s, VarTranslator& vars, int step);
@@ -209,7 +311,7 @@ class AIGtoSATer {
 	bool classicMC(int k);
 
 public:
-	AIGtoSATer(const AIG &aig, CreateSolverFunc newSolver);
+	AIGtoSATer(const AIG &aig);
 
 	void I(CNFer& s, VarTranslator& vars);
 	void T(CNFer& s, VarTranslator& vars, int step);
@@ -221,3 +323,45 @@ public:
 
 	bool check(int k);
 };
+
+template<class RootFunc, class ChainFunc, class DoneFunc, class DeletedFunc>
+struct LambdaTraverser : public ProofTraverser {
+	RootFunc rf;
+	ChainFunc cf;
+	DoneFunc donef;
+	DeletedFunc delf;
+
+	LambdaTraverser(RootFunc rf, ChainFunc cf, DoneFunc donef, DeletedFunc delf) : rf(rf), cf(cf), donef(donef), delf(delf)
+	{
+	}
+
+	virtual void root(const vec<Lit> &c)
+	{
+		rf(c);
+	}
+
+	virtual void chain(const vec<ClauseId> &cs, const vec<Var> &xs)
+	{
+		cf(cs, xs);
+	}
+
+	virtual void done()
+	{
+		donef();
+	}
+
+	virtual void deleted(ClauseId c)
+	{
+		delf(c);
+	}
+
+	virtual ~LambdaTraverser()
+	{
+	}
+};
+
+
+template<class RootFunc, class ChainFunc, class DoneFunc, class DeletedFunc>
+auto makeTraverser(RootFunc rf, ChainFunc cf, DoneFunc donef, DeletedFunc delf) -> LambdaTraverser<RootFunc, ChainFunc, DoneFunc, DeletedFunc> {
+	return LambdaTraverser<RootFunc, ChainFunc, DoneFunc, DeletedFunc>(rf, cf, donef, delf);
+}

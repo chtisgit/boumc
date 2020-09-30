@@ -113,18 +113,6 @@ auto parseArgs(int argc, char **argv) -> Env
 	return e;
 }
 
-auto createSolverWithTraverser(ProofTraverser *trav) -> std::unique_ptr<Solver>
-{
-	auto s = std::make_unique<Solver>();
-	s->proof = nullptr;
-	
-	// proof needs to be assigned before newVar() is called on the Solver...
-	if(trav != nullptr)
-		s->proof = new Proof{*trav};
-
-	return s;
-}
-
 auto main(int argc, char **argv) -> int
 {
 	auto env = parseArgs(argc, argv);
@@ -151,13 +139,13 @@ auto main(int argc, char **argv) -> int
 			}
 
 			DimacsCNFer cnfer(std::cout);
-			AIGtoSATer ats(aig, nullptr);
+			AIGtoSATer ats{aig};
 			VarTranslator vars(&cnfer, aig.lastLit, env.K);
 			ats.toSAT(cnfer, vars, env.K);
 			return 0;
 		}
 
-		AIGtoSATer ats(aig, createSolverWithTraverser);
+		AIGtoSATer ats{aig};
 
 		if(env.Interpolation)
 			ats.enableInterpolation();

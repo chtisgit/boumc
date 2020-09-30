@@ -27,7 +27,7 @@ auto VarTranslator::reset(CNFer *s, int numVars, int k) -> void
 {
 	this->s = s;
 
-	first = s->newVar();
+	while((first = s->newVar()) == 0);
 	last = first + numVars * (k+1);
 
 	falseLit = Lit(first, false);
@@ -37,13 +37,24 @@ auto VarTranslator::reset(CNFer *s, int numVars, int k) -> void
 	}
 }
 
+auto VarTranslator::False() -> Lit
+{
+	return falseLit;
+}
+
+auto VarTranslator::True() -> Lit
+{
+	return ~falseLit;
+}
+
 auto VarTranslator::toLit(int var, int step) -> Lit
 {
 	auto v = var / 2;
 	auto sgn = var % 2 == 1;
 
+	// handle 0 (false) and 1 (true)
 	if (v == 0)
-		return sgn ? ~falseLit : falseLit;
+		return sgn ? True() : False();
 
 	const auto n = first + v + step*numVars; 
 	
@@ -69,126 +80,116 @@ auto VarTranslator::toLit(int var, int step) -> Lit
 TranslationError ErrNegatedOutput{"AIGtoSATer: outputs are expected to be non-negated"};
 TranslationError ErrOutputNotSingular{"AIGtoSATer: only exactly one output is supported"};
 
+static auto isGlobal(Lit lit, const VecCNFer& A, const VecCNFer& B)
+{
+	return A.contains(lit) && B.contains(lit);
+}
+
+static auto globals(const vec<Lit>& c, const VecCNFer& A, const VecCNFer& B, vec<Lit>& res) {
+	for(const auto lit : c) {
+		if(isGlobal(lit, A, B)) {
+			res.push(lit);
+		}
+	}
+}
+
+
 const char NodeRoot[] = "root";
 const char NodeChain[] = "chain";
 
 struct Vertex {
-	const char *type; // NodeRoot or NodeChain
-	int pred1, pred2; // empty for NodeRoot
-	vec<Lit> lit; // literals of a clause
-};
+	const char *type = nullptr; // NodeRoot or NodeChain
 
-struct Trav : public ProofTraverser {
-	vec<Vertex> clauses;
+	vec<Lit> c;
+	vec<ClauseId> cs;
+	vec<Var> xs;
 
-	void print(std::ostream &out)
-	{
-		out << "Proof: " << std::endl;
-		for (int i = 0; i < clauses.size(); i++) {
-			out << "Clause " << (i + 1) << ": ";
-			for (int j = 0; j < clauses[i].lit.size(); j++) {
-				out << (sign(clauses[i].lit[j]) ? "-" : "") << var(clauses[i].lit[j])
-				    << ' ';
-			}
-			out << std::endl;
-		}
-	}
+	Lit lit; // lit is a literal equivalent to pc (i.e. (lit <-> pc) is part of the interpolant) if referenced == true
+	
+	bool referenced = false; // lit is populated
 
-	template <class T, class LessThan>
-	static void sortUnique(vec<T>& v, LessThan lt)
-	{
-		int     size = v.size();
-		T*      data = v.release();
-		std::sort(data, data+size, lt);
-		std::unique(data, data+size);
-		v.~vec<T>();
-		new (&v) vec<T>(data, size);
-	}
+	Vertex() {}
+	
+	Vertex(const char *type) : type(type) {}
 
-	template <class T>
-	static void sortUnique(vec<T>& v)
-	{
-		sortUnique(v, std::less<T>());
-	}
-
-
-	auto newClause(const char *type) -> Vertex&
-	{
-		clauses.push();
-		auto& n = clauses.last();
-		n.type = type;
-
-		return n;
-	}
-
-	static void resolve(vec<Lit> &main, vec<Lit> &other, Var x)
-	{
-		Lit p;
-		bool ok1 = false, ok2 = false;
-		for (int i = 0; i < main.size(); i++) {
-			if (var(main[i]) == x) {
-				ok1 = true, p = main[i];
-				main[i] = main.last();
-				main.pop();
-				break;
-			}
+	auto assignLit(const VecCNFer& A, const VecCNFer& B, Vertex *begin, Lit True, CNFer& itp) -> Lit {
+		if (referenced) {
+			return lit;
 		}
 
-		for (int i = 0; i < other.size(); i++) {
-			if (var(other[i]) != x)
-				main.push(other[i]);
-			else {
-				if (p != ~other[i])
-					printf("PROOF ERROR! Resolved on variable with SAME "
-					       "polarity in both clauses: %d\n",
-					       x + 1);
-				ok2 = true;
+		//std::cout << "assignLit " << type << std::endl;
+
+		if (type == NodeRoot) {
+			if (A.containsClause(c)) {
+				lit = Lit(itp.newVar(), false);
+				
+				vec<Lit> pc; // p(c) is only a disjunction in this case
+				globals(c, A, B, pc);
+
+				// add to itp: lit <-> p(c)
+				for(auto x : pc) {
+					itp.addBinary(~x, lit);
+				}
+
+				vec<Lit> clause{pc};
+				clause.push(~lit);
+				itp.addClause(clause);
+			} else {
+				lit = True;
 			}
+
+			referenced = true;
+		}else if(type == NodeChain) {
+			const auto xssz = xs.size();
+
+			lit = begin[cs[0]].assignLit(A, B, begin, True, itp);
+
+			for(auto i = 0; i < xssz; i++) {
+				const auto c2 = cs[i+1];
+				const auto v = xs[i];
+
+				const auto pc1 = lit;
+				const auto pc2 = begin[c2].assignLit(A, B, begin, True, itp);
+				lit = Lit(itp.newVar(), false);
+
+				if(isGlobal(Lit(v, false), A, B)) {
+					// i.e. lit <-> (p(c1) ^ p(c2))
+					itp.addBinary(pc1, ~lit);
+					itp.addBinary(pc2, ~lit);
+					itp.addTernary(lit, ~pc1, ~pc2);
+				}else{
+					// i.e. lit <-> (p(c1) v p(c2))
+					itp.addBinary(~pc1, lit);
+					itp.addBinary(~pc2, lit);
+					itp.addTernary(~lit, pc1, pc2);
+				}
+			}
+
+			referenced = true;
+		}else{
+			throw std::domain_error("type of vertex: neither root nor chain");
 		}
-
-		if (!ok1 || !ok2)
-			printf("PROOF ERROR! Resolved on missing variable: %d\n", x + 1);
-
-		sortUnique(main);
-	}
-
-	void root(const vec<Lit> &c)
-	{
-        printf("%d: ROOT", clauses.size()); for (int i = 0; i < c.size(); i++) printf(" %s%d", sign(c[i])?"-":"", var(c[i])+1); printf("\n");
-
-		c.copyTo(newClause(NodeRoot).lit);
-	}
-
-	void chain(const vec<ClauseId> &cs, const vec<Var> &xs)
-	{
-        printf("%d: CHAIN %d", clauses.size(), cs[0]); for (int i = 0; i < xs.size(); i++) printf(" [%d] %d", xs[i]+1, cs[i+1]);
-
-		clauses.push();
-		auto& c = newClause(NodeChain);
-		clauses[cs[0]].lit.copyTo(c.lit);
-        for (int i = 0; i < xs.size(); i++)
-            resolve(c.lit, clauses[cs[i+1]].lit, xs[i]);
-
-        printf(" =>"); for (int i = 0; i < c.lit.size(); i++) printf(" %s%d", sign(c.lit[i])?"-":"", var(c.lit[i])+1); printf("\n");
-
-	}
-
-	void deleted(ClauseId c)
-	{
-		clauses[c].lit.clear();
-	}
-
-	virtual void done()
-	{
-		std::cout << "done()" << std::endl;
-	}
-
-	virtual ~Trav()
-	{
+		
+		assert(referenced);
+		
+		return lit;
 	}
 };
 
-AIGtoSATer::AIGtoSATer(const AIG &aig, CreateSolverFunc newSolver) : aig(aig), newSolver(newSolver)
+
+static std::unique_ptr<Solver> newSolver(ProofTraverser *trav)
+{
+	auto s = std::make_unique<Solver>();
+	s->proof = nullptr;
+	
+	// proof needs to be assigned before newVar() is called on the Solver...
+	if(trav != nullptr)
+		s->proof = new Proof{*trav};
+
+	return s;
+}
+
+AIGtoSATer::AIGtoSATer(const AIG &aig) : aig(aig)
 {
 }
 
@@ -270,11 +271,13 @@ void AIGtoSATer::enableInterpolation() {
 
 bool AIGtoSATer::mcmillanMC(int k)
 {
+	const auto K = k;
+
 	VarTranslator vars;
 	{
 		auto s = newSolver(nullptr);
 		SolverCNFer scnfer{*s};
-		vars.reset(&scnfer, aig.lastLit/2, k);
+		vars.reset(&scnfer, aig.lastLit/2, K);
 
 		I(scnfer, vars);
 		F(scnfer, vars, 0, 0);
@@ -284,27 +287,138 @@ bool AIGtoSATer::mcmillanMC(int k)
 		}
 	}
 
-	VecCNFer R;
-	I(R, vars);
+	for(auto k = 1; k <= K; k++){
+		Var newVarCounter = K * aig.lastLit/2;
+		auto newVar = [&]() -> Var {
+			return ++newVarCounter;
+		};
 
-	for(auto i = 0;; i++){
-		Trav proofTraverser;
-		auto s = newSolver(&proofTraverser);
-		SolverCNFer scnfer{*s};
-		vars.reset(&scnfer, aig.lastLit/2, k);
+		VecCNFer R(newVar);
+		I(R, vars);
+		if(R.raw().size() == 0)
+			R.addUnit(vars.True());
 
-		R.copyTo(scnfer);
-		
-		for(auto i = 0; i != k; i++) {
-			T(scnfer, vars, i);
+		// TODO: transform R here.
+
+		for(auto i = 0;;i++){
+			std::cout << "ITERATION " << i << " WITH K=" << k << std::endl;
+			VecCNFer A, B;
+
+			R.copyTo(A);
+			T(A, vars, 0);
+
+			for(auto i = 1; i != k; i++) {
+				T(B, vars, i);
+			}
+
+			F(B, vars, 0, k);
+
+			std::vector<Vertex> proof;
+			VecCNFer itp(newVar);
+
+			auto deletedCalled = false;
+			auto proofTraverser = makeTraverser([&](const auto& c){ // root
+				Vertex vx(NodeRoot);
+				vx.c = c;
+				proof.push_back(std::move(vx));
+			}, [&](const auto& cs, const auto& xs){ // chain
+				Vertex vx(NodeChain);
+
+				assert(cs.size() == xs.size()+1);
+
+				vx.cs = cs;
+				vx.xs = xs;
+
+				proof.push_back(std::move(vx));
+			}, [&]{ // done
+			}, [&](ClauseId c){ // deleted
+				proof[c].c.clear();
+				proof[c].cs.clear();
+				proof[c].xs.clear();
+
+				deletedCalled = true;
+			});
+			auto s = newSolver(&proofTraverser);
+			SolverCNFer scnfer{*s};
+			vars.reset(&scnfer, aig.lastLit/2, K);
+			
+			std::cout << index(vars.True()) << " " << var(vars.True()) << " " << sign(vars.True()) << std::endl;
+
+			A.copyTo(scnfer);
+			B.copyTo(scnfer);
+
+#if 0
+			DimacsCNFer abd(std::cout);
+			vars.reset(&abd, aig.lastLit/2, K);
+			std::cout << "  A" << std::endl;
+			A.copyTo(abd);
+			std::cout << "  B" << std::endl;
+			B.copyTo(abd);
+#endif
+
+			if(s->solve()) { // SAT
+				std::cout << "A ^ B SAT" << std::endl;
+				if(i == 0)
+					return true;
+				else
+					break; // try again with k -> k+1
+			}
+
+			// UNSAT
+			if (deletedCalled) 
+				throw std::runtime_error("deleted called");
+
+			auto R2lit = proof.back().assignLit(A, B, proof.data(), vars.True(), itp);
+
+			VecCNFer Rt(newVar); // R transformed
+			auto Rtlit = R.copyAsTseitinExpression(Rt);
+
+			Solver rrs;
+			SolverCNFer rrscnfer(rrs);
+			vars.reset(&rrscnfer, aig.lastLit/2, K);
+
+			itp.copyTo(rrscnfer);
+			R.copyTo(rrscnfer);
+
+			// check if R2 -> R (<=> R -> R2 is UNSAT)
+			
+			// which one?
+			//rrscnfer.addUnit(~Rtlit);
+			//rrscnfer.addUnit(R2lit);
+			rrscnfer.addBinary(~Rtlit, R2lit);
+
+
+#if 0
+			DimacsCNFer d(std::cout);
+			vars.reset(&d, aig.lastLit/2, K);
+			std::cout << "  ITP" << std::endl;
+			itp.copyTo(d);
+			std::cout << "  Rt" << std::endl;
+			Rt.copyTo(d);
+			std::cout << "  check R -> R'" << std::endl;
+			d.addUnit(~Rtlit);
+			d.addUnit(R2lit);
+#endif
+
+			if(!rrs.solve()) {
+				std::cout << "R' -> R" << std::endl;
+				return false;
+			}
+
+			// Rt v R2 -> Rt
+			itp.copyTo(Rt);
+			Rt.addBinary(Rtlit, R2lit);
+
+			R.swap(Rt);
+
+			//if(i == 1)
+			//	throw std::runtime_error("stop");
 		}
-
-		F(scnfer, vars, 0, k);
-
-		break;
 	}
 
-	throw std::runtime_error("not implemented");
+	std::cout << "undecided. increase k." << std::endl;
+
+	return true;
 }
 
 bool AIGtoSATer::classicMC(int k)
