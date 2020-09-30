@@ -3,6 +3,8 @@ SHELL ?= /bin/sh
 CXX ?= g++
 RM ?= rm -f
 
+ARCHIVENAME = boumc-fiedler
+
 # asan
 # CFLAGS = -fsanitize=address
 # LFLAGS = -fsanitize=address
@@ -17,10 +19,10 @@ LIBS := $(MINISAT)/libminisat.a $(LIBS)
 
 all: boumc
 
-archive: clean boumc.zip
+archive: clean $(ARCHIVENAME).zip
 
-boumc.zip: MiniSat-p_v1.14 *.cpp *.h run-part* Makefile 
-	zip -r boumc-fiedler.zip $^
+$(ARCHIVENAME).zip: MiniSat-p_v1.14 *.cpp *.h run-part* Makefile 
+	zip -r $@ $^
 
 $(MINISAT)/libminisat.a:
 	cd $(MINISAT) && $(MAKE) r libminisat.a
