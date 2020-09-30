@@ -73,7 +73,7 @@ $(EXEC)_static: $(RCOBJS)
 	@echo Linking $@
 	@$(CXX) --static $(RCOBJS) -lz -Wall -o $@
 
-libminisat.a: File.o Proof.o Solver.o
+libminisat.a: File.or Proof.or Solver.or
 	@echo Archiving $@
 	@ar rcs $@ $^
 	@ranlib $@
