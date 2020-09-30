@@ -4,6 +4,7 @@
 #include <exception>
 #include <functional>
 #include <map>
+#include <set>
 #include <memory>
 
 #include "MiniSat-p_v1.14/Solver.h"
@@ -30,50 +31,83 @@ class VecCNFer : public CNFer {
 	Var n = 0;
 
 	std::function<Var()> newv;
+	
+	std::unique_ptr<std::set<Var>> litset;
+	
+	template<typename It>
+	void recordVariables(It begin, It end)
+	{
+		if(!litset)
+			return;
+		litset->insert(begin, end);
+	}
+
+	void recordVariables(const std::initializer_list<Var>& list)
+	{
+		return recordVariables(list.begin(), list.end());
+	}
 
 public:
 	VecCNFer() {};
 	VecCNFer(const std::function<Var()>& newv) : newv(newv) {}
 
-	void swap(VecCNFer &other) {
+	void swap(VecCNFer &other)
+	{
 		std::swap(v, other.v);
 		std::swap(n, other.n);
 		std::swap(newv, other.newv);
 	}
 
+	void setRecordUsedVariables(bool yes)
+	{
+		if (yes) {
+			if (!litset) {
+				litset = std::make_unique<std::set<Var>>();
+			}
+			return;
+		}
+
+		if (litset) {
+			litset.reset(nullptr);
+		}
+	}
+
 	virtual ~VecCNFer() {}
 
-	void setNewVar(std::function<Var()>&& newv) {
+	void setNewVar(std::function<Var()>&& newv)
+	{
 		this->newv = newv;
 	}
 
 	virtual void addClause(const vec<Lit> &clause)
 	{
+		if(litset){
+			vec<Var> vars(clause.size());
+			std::transform(clause.cbegin(), clause.cend(), vars.begin(), [](const auto lit) -> Var {
+				return var(lit);
+			});
+			recordVariables(vars.cbegin(), vars.cend());
+		}
+
 		v.push(clause);
 	}
 
 	virtual void addUnit(Lit a)
 	{
-		vec<Lit> clause(1);
-		clause[0] = a;
-		v.push(clause);
+		recordVariables({var(a)});
+		v.push({a});
 	}
 
 	virtual void addBinary(Lit a, Lit b)
 	{
-		vec<Lit> clause(2);
-		clause[0] = a;
-		clause[1] = b;
-		v.push(clause);
+		recordVariables({var(a), var(b)});
+		v.push({a,b});
 	}
 
 	virtual void addTernary(Lit a, Lit b, Lit c)
 	{
-		vec<Lit> clause(3);
-		clause[0] = a;
-		clause[1] = b;
-		clause[2] = c;
-		v.push(clause);
+		recordVariables({var(a), var(b), var(c)});
+		v.push({a,b,c});
 	}
 
 	virtual Var newVar()
@@ -85,6 +119,7 @@ public:
 		return ++n;
 	}
 
+	// copy all clauses to another CNFer.
 	void copyTo(CNFer& s) const
 	{
 		for(const auto& clause : v) {
@@ -98,7 +133,8 @@ public:
 	// adds the saved formula as (formula iff lit) to the CNFer. The lit
 	// is returned. When added to the CNFer, it holds an equisatisfiable formula
 	// compared to the one saved.
-	auto copyAsTseitinExpression(CNFer& s) -> Lit {
+	auto copyAsTseitinExpression(CNFer& s) -> Lit
+	{
 		vec<Lit> lits;
 		
 		for(const auto& clause : v) {
@@ -135,43 +171,29 @@ public:
 		return lit;
 	}
 
+	// access the vec containing the clauses of the CNF.
 	auto raw() -> container_type&
 	{
 		return v;
 	}
 
+	// check if the variable of the literal is contained in the CNF stored.
+	// when setRecordUsedVariables(true) was called before any clauses were added,
+	// this check can be performed efficiently.
 	auto contains(Lit x) const -> bool
 	{
 		const auto xv = var(x);
+
+		if(litset) {
+			return litset->find(xv) != litset->cend();
+		}
+
 		for(const auto& clause : v) {
 			for(const auto lit : clause){
 				if (var(lit) == xv) {
 					return true;
 				}
 			}
-		}
-
-		return false;
-	}
-
-	auto containsClause(const vec<Lit>& clause) const -> bool
-	{
-		auto vsz = v.size();
-		for (auto i = 0; i != vsz; i++) {
-			auto visz = v[i].size();
-			if (visz != clause.size())
-				continue;
-			
-			auto ok = true;
-			for (auto j = 0; j != visz; j++) {
-				if (v[i][j] != clause[j]) {
-					ok = false;
-					break;
-				}
-			}
-
-			if(ok)
-				return true;
 		}
 
 		return false;
@@ -295,39 +317,87 @@ class VarTranslator {
 
 public:
 	explicit VarTranslator();
+
+	// This constructor is short-hand for default + reset.
 	explicit VarTranslator(CNFer *s, int numVars, int k);
+
+	// reset reserves the variables needed for direct mappings from AIGER
+	// in the CNFer. It also saves the number of variables to compute them.
 	auto reset(CNFer *s, int numVars, int k) -> void;
+
+	// toLit is used to convert a literal from the AIGER model (var) together
+	// with its time index (step) to a literal usable in a CNFer.
 	auto toLit(int var, int step) const -> Lit;
+
+	// False returns the literal reserved for the constant false. Remember
+	// to add True() to the assumptions of a solver.
 	auto False() const -> Lit;
+
+	// True returns the literal reserved for the constant true. Remember to
+	// add it to the assumptions of a solver.
 	auto True() const -> Lit;
-	auto bounds(int step) const -> std::pair<int,int>;
+
+	// timeIndex returns the time index of a literal.
 	auto timeIndex(Lit lit) const -> int;
+
+	// timeShift shifts the literals time index.
 	auto timeShift(Lit lit, int shift) const -> Lit;
 };
 
 extern TranslationError ErrNegatedOutput;
 extern TranslationError ErrOutputNotSingular;
 
+// AIGtoSATer is the actual model checker.
 class AIGtoSATer {
+public:
+	enum Result { _, OK, FAIL };
+
+private:
 	const AIG &aig;
 	bool interpolation = false;
 
+	// andgates adds the clauses representing the AND gates of the
+	// AIGER model to the given CNFer. The VarTranslator is used to
+	// translate AIGER literals to CNFer/Solver literals. The step is
+	// the time index (starting at 0). 
 	void andgates(CNFer& s, VarTranslator& vars, int step) const;
-	bool mcmillanMC(int k) const;
-	bool classicMC(int k) const;
+	
+	// mcmillanMC performs unbounded model checking based on the McMillan paper
+	// up to a bound k. To disable the bound, set k == -1.
+	auto mcmillanMC(int k) const -> Result;
+
+	// classicMC performs bounded model checking with bound k.
+	auto classicMC(int k) const -> Result;
 
 public:
+
+	// Construct the model checker based on a parsed AIGER representation.
 	AIGtoSATer(const AIG &aig);
 
+	// I adds the initial state (and gate outputs at k=0 and zero initialized
+	// latch outputs) to the given CNFer.
 	void I(CNFer& s, VarTranslator& vars) const;
+
+	// T adds a transition function (step is the time index) to the CNFer.
 	void T(CNFer& s, VarTranslator& vars, int step) const;
+
+	// F adds the final condition (the bad state detector from the AIGER
+	// model) to the CNFer. It adds the variable with all time indices
+	// starting at `from` up to and including `to`.
 	void F(CNFer& s, VarTranslator& vars, int from, int to) const;
 
+	// toSAT translates the AIGER model into a bounded model checking CNF, whose
+	// clauses are added to the given CNFer. This is used internally in classicMC,
+	// but it can also used together with a DimacsCNFer to view the generated formula.
 	void toSAT(CNFer& s, VarTranslator& vars, int k) const;
 
+	// enableInterpolation enables interpolation mode in the AIGtoSATer.
+	// It cannot be disabled after that.
 	void enableInterpolation();
 
-	bool check(int k) const;
+	// check runs the model checker with a bound k. When interpolation is turned on,
+	// k can be -1 in which case there is no upper bound. 
+	auto check(int k) const -> Result;
 };
 
 template<class RootFunc, class ChainFunc, class DoneFunc, class DeletedFunc>

@@ -28,6 +28,8 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 #include <cfloat>
 #include <new>
 
+#include <initializer_list>
+
 
 //=================================================================================================
 // Basic Types & Minor Things:

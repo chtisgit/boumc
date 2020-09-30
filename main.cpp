@@ -104,7 +104,7 @@ auto parseArgs(int argc, char **argv) -> Env
 		}
 	}
 
-	if (e.K < 0 && !e.ParserTest) {
+	if (e.K < 0 && !e.ParserTest && !e.Interpolation) {
 		usage(argv[0]);
 		std::cout << "Parameter k was not given" << std::endl;
 		exit(0);
@@ -150,12 +150,10 @@ auto main(int argc, char **argv) -> int
 		if(env.Interpolation)
 			ats.enableInterpolation();
 		
-		// true =>  SAT
-		// false => UNSAT
-		// SAT => E  a path to a Bad State.
-		bool badstate = ats.check(env.K);
+		auto result = ats.check(env.K);
+		assert(result == AIGtoSATer::OK || result == AIGtoSATer::FAIL);
 
-		std::cout << std::endl << (badstate ? "FAIL" : "OK") << std::endl;
+		std::cout << std::endl << (result == AIGtoSATer::FAIL ? "FAIL" : "OK") << std::endl;
 
 	}catch(TranslationError& err) {
 		std::cout << "translation error: " << err.what() << std::endl << std::endl;

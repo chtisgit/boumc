@@ -23,7 +23,7 @@ boumc.zip: MiniSat-p_v1.14 *.cpp *.h run-part* Makefile
 	zip -r boumc-fiedler.zip $^
 
 $(MINISAT)/libminisat.a:
-	cd $(MINISAT) && $(MAKE) libminisat.a
+	cd $(MINISAT) && $(MAKE) r libminisat.a
 
 boumc: aag.o main.o translate.o $(LIBS)
 	$(CXX) $(LFLAGS) -o $@ $^

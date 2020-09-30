@@ -86,17 +86,6 @@ auto VarTranslator::toLit(int var, int step) const -> Lit
 	return Lit(n, sgn);
 };
 
-auto VarTranslator::bounds(int step) const -> std::pair<int,int>
-{
-	auto res = std::make_pair(first+step*numVars, first+(step+1)*numVars);
-	//std::cout << "first=" << first << " numVars=" << numVars << " res.first=" << res.first << " var(toLit(2, " << step << "))=" << var(toLit(2, step)) << std::endl;
-
-	//assert(var(toLit(2, step)) == res.first);
-	//assert(var(toLit(2, step+1)) == res.second);
-
-	return res;
-}
-
 auto VarTranslator::timeIndex(Lit lit) const -> int
 {
 	if(var(lit) == 0 || numVars == 0) {
@@ -116,20 +105,6 @@ auto VarTranslator::timeShift(Lit lit, int shift) const -> Lit
 
 TranslationError ErrNegatedOutput{"AIGtoSATer: outputs are expected to be non-negated"};
 TranslationError ErrOutputNotSingular{"AIGtoSATer: only exactly one output is supported"};
-
-static auto isGlobal(Lit lit, const VecCNFer& A, const VecCNFer& B)
-{
-	return A.contains(lit) && B.contains(lit);
-}
-
-static auto globals(const vec<Lit>& c, const VecCNFer& A, const VecCNFer& B, vec<Lit>& res) {
-	for(const auto lit : c) {
-		if(isGlobal(lit, A, B)) {
-			res.push(lit);
-		}
-	}
-}
-
 
 const char VertexRoot[] = "root";
 const char VertexChain[] = "chain";
@@ -165,30 +140,25 @@ struct Vertex {
 		//std::cout << "assignLit " << type << std::endl;
 
 		if (type == VertexRoot) {
-			//if (A.containsClause(c)) {
 			if (partOfA) {
 				lit = Lit(itp.newVar(), false);
 				
 				vec<Lit> pc; // p(c) is only a disjunction in this case
-				globals(c, A, B, pc);
 
-#if 0
-				std::cout << "c = ";
-				for(auto x : c) {
-					std::cout << (sign(x) ? "-" : "") << var(x) << " ";
-				}
-				std::cout << std::endl;
-#endif
+				// compute globals by only adding the variables to p(c) that are in B.
+				// We know they are in A because of the if condition above.
+				std::for_each(c.begin(), c.end(), [&](const auto lit) {
+					if(B.contains(lit)) {
+						pc.push(lit);
+					}
+				});
 
 				if (pc.size() != 0) {
 					// add to itp: lit <-> p(c)
 		
-					//std::cout << "g(c) = ";
 					for(auto x : pc) {
-						//std::cout << (sign(x) ? "-" : "") << var(x) << " ";
 						itp.addBinary(~x, lit);
 					}
-					//std::cout << std::endl;
 
 					pc.push(~lit);
 					itp.addClause(pc);
@@ -213,15 +183,38 @@ struct Vertex {
 
 				const auto pc1 = lit;
 				const auto pc2 = begin[c2].assignLit(A, B, vars, begin, itp);
-				lit = Lit(itp.newVar(), false);
 
 				if(B.contains(Lit(v, false))) {
 					// i.e. lit <-> (p(c1) ^ p(c2))
+					if(pc1 == vars.True()) {
+						lit = pc2;
+						continue;
+					}else if(pc2 == vars.True()) {
+						lit = pc1;
+						continue;
+					}else if(pc1 == vars.False() || pc2 == vars.False()) {
+						lit = vars.False();
+						continue;
+					}
+
+					lit = Lit(itp.newVar(), false);
 					itp.addBinary(pc1, ~lit);
 					itp.addBinary(pc2, ~lit);
 					itp.addTernary(lit, ~pc1, ~pc2);
 				}else{
 					// i.e. lit <-> (p(c1) v p(c2))
+					if(pc1 == vars.False()) {
+						lit = pc2;
+						continue;
+					}else if(pc2 == vars.False()) {
+						lit = pc1;
+						continue;
+					}else if(pc1 == vars.True() || pc2 == vars.True()) {
+						lit = vars.True();
+						continue;
+					}
+
+					lit = Lit(itp.newVar(), false);
 					itp.addBinary(~pc1, lit);
 					itp.addBinary(~pc2, lit);
 					itp.addTernary(~lit, pc1, pc2);
@@ -332,7 +325,7 @@ void AIGtoSATer::enableInterpolation() {
 	interpolation = true;
 }
 
-bool AIGtoSATer::mcmillanMC(int k) const
+auto AIGtoSATer::mcmillanMC(int k) const -> Result
 {
 	const auto K = k;
 	const auto numVars = aig.lastLit/2;
@@ -341,13 +334,13 @@ bool AIGtoSATer::mcmillanMC(int k) const
 	{
 		auto s = newSolver(nullptr);
 		SolverCNFer scnfer{*s};
-		vars.reset(&scnfer, numVars, K);
+		vars.reset(&scnfer, numVars, 0);
 
 		I(scnfer, vars);
 		F(scnfer, vars, 0, 0);
 
 		if(s->solve({vars.True()})) {
-			return true;
+			return FAIL;
 		}
 	}
 
@@ -356,7 +349,9 @@ bool AIGtoSATer::mcmillanMC(int k) const
 	if(firstR.raw().size() == 0)
 		firstR.addUnit(vars.True());
 
-	for(k = 1; k <= K; k++){
+	for(k = 1; k <= K || K == -1 ; k++){
+
+		// lambda for generating unique variables.
 		Var newVarCounter = (k+2) * numVars + 10;
 		auto newVar = [&]() -> Var {
 			return ++newVarCounter;
@@ -366,38 +361,36 @@ bool AIGtoSATer::mcmillanMC(int k) const
 		VecCNFer R(newVar); // R transformed
 		auto Rlit = firstR.copyAsTseitinExpression(R);
 
+		// compute B here, because it does not change in inner loop.
+		VecCNFer B;
+		B.setRecordUsedVariables(true);
+		
+		for(auto i = 1; i != k; i++) {
+			T(B, vars, i);
+		}
+
+		F(B, vars, 0, k);
+
 		for(auto i = 0;;i++){
 			std::cout << "ITERATION " << i << " WITH K=" << k << std::endl;
-			VecCNFer A, B;
+			VecCNFer A;
+
 
 			R.copyTo(A);
 			A.addUnit(Rlit);
 			T(A, vars, 0);
 
-			for(auto i = 1; i != k; i++) {
-				T(B, vars, i);
-			}
-
-			F(B, vars, 0, k);
-
 			std::vector<Vertex> proof;
 			VecCNFer itp(newVar);
 
+			// lambda based proof traverser creates the refutation DAG in
+			// the `proof` vector from above.
 			auto partOfA = true;
 			auto proofTraverser = makeTraverser([&](const auto& c){ // root
 				Vertex vx(VertexRoot);
 				vx.c = c;
 				vx.partOfA = partOfA;
 
-#if 0
-				if(!partOfA){
-					std::cout << "clause : ";
-					for(auto x : c) {
-						std::cout << (sign(x)?"-":"") << var(x) << " ";
-					}
-					std::cout << "partOfA = " << partOfA << std::endl;
-				}
-#endif
 				proof.push_back(std::move(vx));
 			}, [&](const auto& cs, const auto& xs){ // chain
 				Vertex vx(VertexChain);
@@ -408,14 +401,11 @@ bool AIGtoSATer::mcmillanMC(int k) const
 				vx.xs = xs;
 
 				proof.push_back(std::move(vx));
-			}, [&]{ // done
-			}, [&](ClauseId c){ // deleted
+			}, [&]{ /* done */ }, [&](ClauseId c){ // deleted
 				proof[c].c.clear();
 				proof[c].cs.clear();
 				proof[c].xs.clear();
 				proof[c].deleted = true;
-
-				// std::cout << "DELETE CLAUSE " << c << " (type " << proof[c].type << ") (proof.size() = "<< proof.size() << ")" << std::endl;
 			});
 			auto s = newSolver(&proofTraverser);
 			SolverCNFer scnfer{*s};
@@ -439,27 +429,27 @@ bool AIGtoSATer::mcmillanMC(int k) const
 			if(s->solve({vars.True()})) { // SAT
 				std::cout << "A ^ B SAT" << std::endl;
 				if(i == 0)
-					return true;
+					return FAIL;
 				else
 					break; // try again with k -> k+1
 			}
 
 			// UNSAT
 
+			// compute interpolant ITP recursively. R2lit is the literal
+			// that is equisatisfiable to the interpolant.
 			auto R2lit = proof.back().assignLit(A, B, vars, proof.data(), itp);
 
-			int count = 0;
+			// shift indices k = 1 -> k = 0 in ITP
 			for(auto& c : itp.raw()){
 				for(auto& lit : c) {
 					if (vars.timeIndex(lit) == 1) {
 						lit = vars.timeShift(lit, -1);
-						count++;
 					}
 				}
 			}
 
-			//std::cout << count << " variables substituted." << std::endl;
-
+			// Solver that checks if R2 -> R.
 			Solver rrs;
 			SolverCNFer rrscnfer(rrs);
 			vars.reset(&rrscnfer, numVars, k);
@@ -488,7 +478,7 @@ bool AIGtoSATer::mcmillanMC(int k) const
 
 			if(!rrs.solve({vars.True()})) {
 				std::cout << "R' -> R" << std::endl;
-				return false;
+				return OK;
 			}
 
 			auto newRlit = Lit(newVar(), false);
@@ -500,19 +490,17 @@ bool AIGtoSATer::mcmillanMC(int k) const
 			R.addBinary(~R2lit, newRlit);
 			R.addTernary(~newRlit, Rlit, R2lit);
 
+			// newR becomes R
 			Rlit = newRlit;
-
-			//if(i == 1)
-			//	throw std::runtime_error("stop");
 		}
 	}
 
 	std::cout << "undecided. increase k." << std::endl;
 
-	return true;
+	return FAIL;
 }
 
-bool AIGtoSATer::classicMC(int k) const
+auto AIGtoSATer::classicMC(int k) const -> Result
 {
 	auto s = newSolver(nullptr);
 	SolverCNFer scnfer{*s};
@@ -520,11 +508,14 @@ bool AIGtoSATer::classicMC(int k) const
 
 	toSAT(scnfer, vars, k);
 
-	return s->solve({vars.True()});
+	// true =>  SAT
+	// false => UNSAT
+	// SAT => E  a path to a Bad State.
+	return s->solve({vars.True()}) ? FAIL : OK;
 }
 
 
-bool AIGtoSATer::check(int k) const
+auto AIGtoSATer::check(int k) const -> Result
 {
 	if(interpolation){
 		return mcmillanMC(k);
