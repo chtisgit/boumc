@@ -177,6 +177,12 @@ public:
         other.moveTo(*this);
     }
 
+    void swap(vec<T>& other) {
+        std::swap(data, other.data);
+        std::swap(sz, other.sz);
+        std::swap(cap, other.cap);
+    }
+
 
     // Ownership of underlying array:
     T*       release  (void)           { T* ret = data; data = NULL; sz = 0; cap = 0; return ret; }
@@ -202,13 +208,27 @@ public:
     const T& operator [] (int index) const  { return data[index]; }
     T&       operator [] (int index)        { return data[index]; }
 
-    // Don't allow copying (error prone):
-    vec<T>&  operator = (vec<T>& other) { TEMPLATE_FAIL; }
-             vec        (vec<T>& other) { TEMPLATE_FAIL; }
+    // allow copying (error prone):
+    vec<T>&  operator= (const vec<T>& other) {
+        other.copyTo(*this);
+        return *this;
+    }
+    vec<T>&  operator= (vec<T>&& other) {
+        other.moveTo(*this);
+        return *this;
+    }
 
     // Duplicatation (preferred instead):
     void copyTo(vec<T>& copy) const { copy.clear(); copy.growTo(sz); for (int i = 0; i < sz; i++) new (&copy[i]) T(data[i]); }
     void moveTo(vec<T>& dest) { dest.clear(true); dest.data = data; dest.sz = sz; dest.cap = cap; data = NULL; sz = 0; cap = 0; }
+
+    // enable range for loops
+    auto cbegin() const -> const T* { return data; }
+    auto cend() const -> const T* { return data+sz; }
+    auto begin() -> T* { return data; }
+    auto end() -> T* { return data+sz; }
+    auto begin() const -> const T* { return cbegin(); }
+    auto end() const -> const T* { return cend(); }
 };
 
 template<class T>
