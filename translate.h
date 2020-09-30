@@ -201,16 +201,19 @@ public:
 
 	virtual void addUnit(Lit a)
 	{
+		ensureVars(var(a));
 		s.addUnit(a);
 	}
 
 	virtual void addBinary(Lit a, Lit b)
 	{
+		ensureVars(var(std::max(a,b)));
 		s.addBinary(a, b);
 	}
 
 	virtual void addTernary(Lit a, Lit b, Lit c)
 	{
+		ensureVars(var(std::max(a,std::max(b,c))));
 		s.addTernary(a, b, c);
 	}
 
@@ -239,7 +242,7 @@ public:
 
 	void put(Lit x)
 	{
-		o << (sign(x) ? "-" : "") << (var(x)+1);
+		o << (sign(x) ? "-" : "") << (var(x));
 	}
 
 	virtual void addClause(const vec<Lit> &v)
@@ -248,13 +251,13 @@ public:
 			put(v[i]);
 			o << " ";
 		}
-		o << std::endl;
+		o << "0" << std::endl;
 	}
 
 	virtual void addUnit(Lit a)
 	{
 		put(a);
-		o << std::endl;
+		o << " 0" << std::endl;
 	}
 
 	virtual void addBinary(Lit a, Lit b)
@@ -262,7 +265,7 @@ public:
 		put(a);
         o << " ";
 		put(b);
-		o << std::endl;
+		o << " 0" << std::endl;
 	}
 
 	virtual void addTernary(Lit a, Lit b, Lit c)
@@ -272,7 +275,7 @@ public:
 		put(b);
         o << " ";
 		put(c);
-		o << std::endl;
+		o << " 0" << std::endl;
 	}
 
 	virtual Var newVar()
@@ -294,9 +297,12 @@ public:
 	explicit VarTranslator();
 	explicit VarTranslator(CNFer *s, int numVars, int k);
 	auto reset(CNFer *s, int numVars, int k) -> void;
-	auto toLit(int var, int step) -> Lit;
-	auto False() -> Lit;
-	auto True() -> Lit;
+	auto toLit(int var, int step) const -> Lit;
+	auto False() const -> Lit;
+	auto True() const -> Lit;
+	auto bounds(int step) const -> std::pair<int,int>;
+	auto timeIndex(Lit lit) const -> int;
+	auto timeShift(Lit lit, int shift) const -> Lit;
 };
 
 extern TranslationError ErrNegatedOutput;
@@ -306,22 +312,22 @@ class AIGtoSATer {
 	const AIG &aig;
 	bool interpolation = false;
 
-	void andgates(CNFer& s, VarTranslator& vars, int step);
-	bool mcmillanMC(int k);
-	bool classicMC(int k);
+	void andgates(CNFer& s, VarTranslator& vars, int step) const;
+	bool mcmillanMC(int k) const;
+	bool classicMC(int k) const;
 
 public:
 	AIGtoSATer(const AIG &aig);
 
-	void I(CNFer& s, VarTranslator& vars);
-	void T(CNFer& s, VarTranslator& vars, int step);
-	void F(CNFer& s, VarTranslator& vars, int from, int to);
+	void I(CNFer& s, VarTranslator& vars) const;
+	void T(CNFer& s, VarTranslator& vars, int step) const;
+	void F(CNFer& s, VarTranslator& vars, int from, int to) const;
 
-	void toSAT(CNFer& s, VarTranslator& vars, int k);
+	void toSAT(CNFer& s, VarTranslator& vars, int k) const;
 
 	void enableInterpolation();
 
-	bool check(int k);
+	bool check(int k) const;
 };
 
 template<class RootFunc, class ChainFunc, class DoneFunc, class DeletedFunc>

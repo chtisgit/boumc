@@ -136,7 +136,7 @@ auto AIG::FromStream(std::istream &in) -> AIG
 		});
 	}
 
-	if (aig.lastLit > maxVarInd) {
+	if (aig.lastLit/2 > maxVarInd) {
 		std::cout << "warning: the number of variables is not correct in your aag file! (" << maxVarInd << " given, " << aig.lastLit << " correct)" << std::endl;
 	}
 

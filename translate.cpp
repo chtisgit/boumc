@@ -18,7 +18,7 @@ VarTranslator::VarTranslator() : s(nullptr), falseLit(0), first(0), last(0), num
 {
 }
 
-VarTranslator::VarTranslator(CNFer *s, int numVars, int k) : numVars(numVars)
+VarTranslator::VarTranslator(CNFer *s, int numVars, int k) : numVars(0)
 {
 	reset(s, numVars, k);
 }
@@ -26,28 +26,34 @@ VarTranslator::VarTranslator(CNFer *s, int numVars, int k) : numVars(numVars)
 auto VarTranslator::reset(CNFer *s, int numVars, int k) -> void
 {
 	this->s = s;
+	if(this->numVars != 0 && this->numVars != numVars)
+		throw std::runtime_error("numVars changed");
+	
+	this->numVars = numVars;
 
-	while((first = s->newVar()) == 0);
-	last = first + numVars * (k+1);
+	while((first = s->newVar()) < 2);
+	assert(first == 2);
+	falseLit = Lit(first-1, false);
+	last = first + numVars * (k+2);
 
-	falseLit = Lit(first, false);
-	s->addUnit(~falseLit);
+	//std::cout << "first=" << first << " last=" << last << std::endl;
+	//s->addUnit(~falseLit);
 
 	while(s->newVar() < last) {
 	}
 }
 
-auto VarTranslator::False() -> Lit
+auto VarTranslator::False() const -> Lit
 {
 	return falseLit;
 }
 
-auto VarTranslator::True() -> Lit
+auto VarTranslator::True() const -> Lit
 {
 	return ~falseLit;
 }
 
-auto VarTranslator::toLit(int var, int step) -> Lit
+auto VarTranslator::toLit(int var, int step) const -> Lit
 {
 	auto v = var / 2;
 	auto sgn = var % 2 == 1;
@@ -56,8 +62,11 @@ auto VarTranslator::toLit(int var, int step) -> Lit
 	if (v == 0)
 		return sgn ? True() : False();
 
-	const auto n = first + v + step*numVars; 
-	
+	const auto n = first + (v-1) + step*numVars; 
+
+	//std::cout << "numVars = " << numVars << std::endl;
+	//std::cout << "(" << var << "," << step << ") -> " << n << std::endl;
+
 #if 0
 	auto index = std::make_pair(v,step);
 	auto it = m.find(index);
@@ -70,12 +79,40 @@ auto VarTranslator::toLit(int var, int step) -> Lit
 	m[index] = n;
 #endif
 
-	while (n > last) {
-		last = s->newVar();
-	}
+	//std::cout << "first=" << first << " last=" << last << std::endl;
+	//std::cout << "(" << var << "," << step << ") -> " << n << std::endl;
+	assert(n >= first && n < last);
 
 	return Lit(n, sgn);
 };
+
+auto VarTranslator::bounds(int step) const -> std::pair<int,int>
+{
+	auto res = std::make_pair(first+step*numVars, first+(step+1)*numVars);
+	//std::cout << "first=" << first << " numVars=" << numVars << " res.first=" << res.first << " var(toLit(2, " << step << "))=" << var(toLit(2, step)) << std::endl;
+
+	//assert(var(toLit(2, step)) == res.first);
+	//assert(var(toLit(2, step+1)) == res.second);
+
+	return res;
+}
+
+auto VarTranslator::timeIndex(Lit lit) const -> int
+{
+	if(var(lit) == 0 || numVars == 0) {
+		return 0;
+	}
+
+	return (var(lit)-first)/numVars;
+}
+
+auto VarTranslator::timeShift(Lit lit, int shift) const -> Lit
+{
+	if(var(lit) == 0)
+		throw "cannot shift true/false constants";
+	
+	return Lit(var(lit) + shift*numVars, sign(lit));
+}
 
 TranslationError ErrNegatedOutput{"AIGtoSATer: outputs are expected to be non-negated"};
 TranslationError ErrOutputNotSingular{"AIGtoSATer: only exactly one output is supported"};
@@ -94,65 +131,91 @@ static auto globals(const vec<Lit>& c, const VecCNFer& A, const VecCNFer& B, vec
 }
 
 
-const char NodeRoot[] = "root";
-const char NodeChain[] = "chain";
+const char VertexRoot[] = "root";
+const char VertexChain[] = "chain";
 
 struct Vertex {
-	const char *type = nullptr; // NodeRoot or NodeChain
+	const char *type = nullptr; // VertexRoot or VertexChain
 
 	vec<Lit> c;
 	vec<ClauseId> cs;
 	vec<Var> xs;
+	bool partOfA;
 
 	Lit lit; // lit is a literal equivalent to pc (i.e. (lit <-> pc) is part of the interpolant) if referenced == true
 	
 	bool referenced = false; // lit is populated
+	bool deleted = false; // deleted was called on the vertex.
 
 	Vertex() {}
 	
 	Vertex(const char *type) : type(type) {}
 
-	auto assignLit(const VecCNFer& A, const VecCNFer& B, Vertex *begin, Lit True, CNFer& itp) -> Lit {
+	auto assignLit(const VecCNFer& A, const VecCNFer& B, const VarTranslator& vars, Vertex *begin, CNFer& itp) -> Lit {
+		if (deleted) {
+			std::cout << "warning: chain on deleted clause" << std::endl;
+			//throw std::runtime_error("chain on deleted clause");
+			return vars.False();
+		}
+
 		if (referenced) {
 			return lit;
 		}
 
 		//std::cout << "assignLit " << type << std::endl;
 
-		if (type == NodeRoot) {
-			if (A.containsClause(c)) {
+		if (type == VertexRoot) {
+			//if (A.containsClause(c)) {
+			if (partOfA) {
 				lit = Lit(itp.newVar(), false);
 				
 				vec<Lit> pc; // p(c) is only a disjunction in this case
 				globals(c, A, B, pc);
 
-				// add to itp: lit <-> p(c)
-				for(auto x : pc) {
-					itp.addBinary(~x, lit);
+#if 0
+				std::cout << "c = ";
+				for(auto x : c) {
+					std::cout << (sign(x) ? "-" : "") << var(x) << " ";
 				}
+				std::cout << std::endl;
+#endif
 
-				vec<Lit> clause{pc};
-				clause.push(~lit);
-				itp.addClause(clause);
+				if (pc.size() != 0) {
+					// add to itp: lit <-> p(c)
+		
+					//std::cout << "g(c) = ";
+					for(auto x : pc) {
+						//std::cout << (sign(x) ? "-" : "") << var(x) << " ";
+						itp.addBinary(~x, lit);
+					}
+					//std::cout << std::endl;
+
+					pc.push(~lit);
+					itp.addClause(pc);
+				}else{
+					lit = vars.False();
+				}
 			} else {
-				lit = True;
+				lit = vars.True();
 			}
 
 			referenced = true;
-		}else if(type == NodeChain) {
+		}else if(type == VertexChain) {
 			const auto xssz = xs.size();
 
-			lit = begin[cs[0]].assignLit(A, B, begin, True, itp);
+			lit = begin[cs[0]].assignLit(A, B, vars, begin, itp);
 
 			for(auto i = 0; i < xssz; i++) {
 				const auto c2 = cs[i+1];
-				const auto v = xs[i];
+				const auto v = xs[i]; // pivot variable
+
+				//std::cout << "pivot " << v << std::endl;
 
 				const auto pc1 = lit;
-				const auto pc2 = begin[c2].assignLit(A, B, begin, True, itp);
+				const auto pc2 = begin[c2].assignLit(A, B, vars, begin, itp);
 				lit = Lit(itp.newVar(), false);
 
-				if(isGlobal(Lit(v, false), A, B)) {
+				if(B.contains(Lit(v, false))) {
 					// i.e. lit <-> (p(c1) ^ p(c2))
 					itp.addBinary(pc1, ~lit);
 					itp.addBinary(pc2, ~lit);
@@ -193,7 +256,7 @@ AIGtoSATer::AIGtoSATer(const AIG &aig) : aig(aig)
 {
 }
 
-void AIGtoSATer::andgates(CNFer& s, VarTranslator& vars, int step)
+void AIGtoSATer::andgates(CNFer& s, VarTranslator& vars, int step) const
 {
 	for (const auto &gate : aig.gates) {
 		auto x = vars.toLit(gate.out, step);
@@ -210,7 +273,7 @@ void AIGtoSATer::andgates(CNFer& s, VarTranslator& vars, int step)
 	}
 }
 
-void AIGtoSATer::I(CNFer& s, VarTranslator& vars)
+void AIGtoSATer::I(CNFer& s, VarTranslator& vars) const
 {
 	// Initial latch output is zero.
 	for (const auto &latch : aig.latches) {
@@ -226,7 +289,7 @@ void AIGtoSATer::I(CNFer& s, VarTranslator& vars)
 	andgates(s, vars, 0);
 }
 
-void AIGtoSATer::T(CNFer& s, VarTranslator& vars, int step)
+void AIGtoSATer::T(CNFer& s, VarTranslator& vars, int step) const
 {
 	// Latch transition function: q(n+1) <-> d(n).
 	for (const auto &latch : aig.latches) {
@@ -239,7 +302,7 @@ void AIGtoSATer::T(CNFer& s, VarTranslator& vars, int step)
 	andgates(s, vars, step + 1);
 }
 
-void AIGtoSATer::F(CNFer& s, VarTranslator& vars, int from, int to)
+void AIGtoSATer::F(CNFer& s, VarTranslator& vars, int from, int to) const
 {
 	vec<Lit> clause(to-from+1);
 
@@ -250,7 +313,7 @@ void AIGtoSATer::F(CNFer& s, VarTranslator& vars, int from, int to)
 	s.addClause(clause);
 }
 
-void AIGtoSATer::toSAT(CNFer& s, VarTranslator& vars, int k)
+void AIGtoSATer::toSAT(CNFer& s, VarTranslator& vars, int k) const
 {
 	if (aig.outputs.size() != 1) {
 		throw ErrOutputNotSingular;
@@ -269,42 +332,46 @@ void AIGtoSATer::enableInterpolation() {
 	interpolation = true;
 }
 
-bool AIGtoSATer::mcmillanMC(int k)
+bool AIGtoSATer::mcmillanMC(int k) const
 {
 	const auto K = k;
+	const auto numVars = aig.lastLit/2;
 
 	VarTranslator vars;
 	{
 		auto s = newSolver(nullptr);
 		SolverCNFer scnfer{*s};
-		vars.reset(&scnfer, aig.lastLit/2, K);
+		vars.reset(&scnfer, numVars, K);
 
 		I(scnfer, vars);
 		F(scnfer, vars, 0, 0);
 
-		if(s->solve()) {
+		if(s->solve({vars.True()})) {
 			return true;
 		}
 	}
 
-	for(auto k = 1; k <= K; k++){
-		Var newVarCounter = K * aig.lastLit/2;
+	VecCNFer firstR;
+	I(firstR, vars);
+	if(firstR.raw().size() == 0)
+		firstR.addUnit(vars.True());
+
+	for(k = 1; k <= K; k++){
+		Var newVarCounter = (k+2) * numVars + 10;
 		auto newVar = [&]() -> Var {
 			return ++newVarCounter;
 		};
 
-		VecCNFer R(newVar);
-		I(R, vars);
-		if(R.raw().size() == 0)
-			R.addUnit(vars.True());
-
-		// TODO: transform R here.
+		firstR.setNewVar(newVar);
+		VecCNFer R(newVar); // R transformed
+		auto Rlit = firstR.copyAsTseitinExpression(R);
 
 		for(auto i = 0;;i++){
 			std::cout << "ITERATION " << i << " WITH K=" << k << std::endl;
 			VecCNFer A, B;
 
 			R.copyTo(A);
+			A.addUnit(Rlit);
 			T(A, vars, 0);
 
 			for(auto i = 1; i != k; i++) {
@@ -316,13 +383,24 @@ bool AIGtoSATer::mcmillanMC(int k)
 			std::vector<Vertex> proof;
 			VecCNFer itp(newVar);
 
-			auto deletedCalled = false;
+			auto partOfA = true;
 			auto proofTraverser = makeTraverser([&](const auto& c){ // root
-				Vertex vx(NodeRoot);
+				Vertex vx(VertexRoot);
 				vx.c = c;
+				vx.partOfA = partOfA;
+
+#if 0
+				if(!partOfA){
+					std::cout << "clause : ";
+					for(auto x : c) {
+						std::cout << (sign(x)?"-":"") << var(x) << " ";
+					}
+					std::cout << "partOfA = " << partOfA << std::endl;
+				}
+#endif
 				proof.push_back(std::move(vx));
 			}, [&](const auto& cs, const auto& xs){ // chain
-				Vertex vx(NodeChain);
+				Vertex vx(VertexChain);
 
 				assert(cs.size() == xs.size()+1);
 
@@ -335,28 +413,30 @@ bool AIGtoSATer::mcmillanMC(int k)
 				proof[c].c.clear();
 				proof[c].cs.clear();
 				proof[c].xs.clear();
+				proof[c].deleted = true;
 
-				deletedCalled = true;
+				// std::cout << "DELETE CLAUSE " << c << " (type " << proof[c].type << ") (proof.size() = "<< proof.size() << ")" << std::endl;
 			});
 			auto s = newSolver(&proofTraverser);
 			SolverCNFer scnfer{*s};
-			vars.reset(&scnfer, aig.lastLit/2, K);
+			vars.reset(&scnfer, numVars, k);
 			
-			std::cout << index(vars.True()) << " " << var(vars.True()) << " " << sign(vars.True()) << std::endl;
-
 			A.copyTo(scnfer);
+			partOfA = false;
 			B.copyTo(scnfer);
 
 #if 0
 			DimacsCNFer abd(std::cout);
-			vars.reset(&abd, aig.lastLit/2, K);
-			std::cout << "  A" << std::endl;
+			vars.reset(&abd, numVars, k);
+			std::cout << "  <A>" << std::endl;
 			A.copyTo(abd);
-			std::cout << "  B" << std::endl;
+			std::cout << "  </A>" << std::endl;
+			std::cout << "  <B>" << std::endl;
 			B.copyTo(abd);
+			std::cout << "  </B>" << std::endl;
 #endif
 
-			if(s->solve()) { // SAT
+			if(s->solve({vars.True()})) { // SAT
 				std::cout << "A ^ B SAT" << std::endl;
 				if(i == 0)
 					return true;
@@ -365,51 +445,62 @@ bool AIGtoSATer::mcmillanMC(int k)
 			}
 
 			// UNSAT
-			if (deletedCalled) 
-				throw std::runtime_error("deleted called");
 
-			auto R2lit = proof.back().assignLit(A, B, proof.data(), vars.True(), itp);
+			auto R2lit = proof.back().assignLit(A, B, vars, proof.data(), itp);
 
-			VecCNFer Rt(newVar); // R transformed
-			auto Rtlit = R.copyAsTseitinExpression(Rt);
+			int count = 0;
+			for(auto& c : itp.raw()){
+				for(auto& lit : c) {
+					if (vars.timeIndex(lit) == 1) {
+						lit = vars.timeShift(lit, -1);
+						count++;
+					}
+				}
+			}
+
+			//std::cout << count << " variables substituted." << std::endl;
 
 			Solver rrs;
 			SolverCNFer rrscnfer(rrs);
-			vars.reset(&rrscnfer, aig.lastLit/2, K);
+			vars.reset(&rrscnfer, numVars, k);
 
 			itp.copyTo(rrscnfer);
 			R.copyTo(rrscnfer);
 
-			// check if R2 -> R (<=> R -> R2 is UNSAT)
-			
-			// which one?
-			//rrscnfer.addUnit(~Rtlit);
-			//rrscnfer.addUnit(R2lit);
-			rrscnfer.addBinary(~Rtlit, R2lit);
-
+			// check if R2 -> R (<=> R = FALSE & R2 = TRUE is UNSAT)
+			rrscnfer.addUnit(~Rlit);
+			rrscnfer.addUnit(R2lit);
 
 #if 0
 			DimacsCNFer d(std::cout);
-			vars.reset(&d, aig.lastLit/2, K);
-			std::cout << "  ITP" << std::endl;
+			vars.reset(&d, numVars, k);
+			std::cout << "  <ITP>" << std::endl;
 			itp.copyTo(d);
-			std::cout << "  Rt" << std::endl;
-			Rt.copyTo(d);
-			std::cout << "  check R -> R'" << std::endl;
-			d.addUnit(~Rtlit);
+			std::cout << "  </ITP>" << std::endl;
+			std::cout << "  <R>" << std::endl;
+			R.copyTo(d);
+			std::cout << "  </R>" << std::endl;
+			std::cout << "  <check if R' -> R>" << std::endl;
+			d.addUnit(~Rlit);
 			d.addUnit(R2lit);
+			std::cout << "  </check if R' -> R>" << std::endl;
 #endif
 
-			if(!rrs.solve()) {
+			if(!rrs.solve({vars.True()})) {
 				std::cout << "R' -> R" << std::endl;
 				return false;
 			}
 
-			// Rt v R2 -> Rt
-			itp.copyTo(Rt);
-			Rt.addBinary(Rtlit, R2lit);
+			auto newRlit = Lit(newVar(), false);
 
-			R.swap(Rt);
+			// (R v R2) <-> newR
+			itp.copyTo(R);
+
+			R.addBinary(~Rlit, newRlit);
+			R.addBinary(~R2lit, newRlit);
+			R.addTernary(~newRlit, Rlit, R2lit);
+
+			Rlit = newRlit;
 
 			//if(i == 1)
 			//	throw std::runtime_error("stop");
@@ -421,7 +512,7 @@ bool AIGtoSATer::mcmillanMC(int k)
 	return true;
 }
 
-bool AIGtoSATer::classicMC(int k)
+bool AIGtoSATer::classicMC(int k) const
 {
 	auto s = newSolver(nullptr);
 	SolverCNFer scnfer{*s};
@@ -429,11 +520,11 @@ bool AIGtoSATer::classicMC(int k)
 
 	toSAT(scnfer, vars, k);
 
-	return s->solve();
+	return s->solve({vars.True()});
 }
 
 
-bool AIGtoSATer::check(int k)
+bool AIGtoSATer::check(int k) const
 {
 	if(interpolation){
 		return mcmillanMC(k);
