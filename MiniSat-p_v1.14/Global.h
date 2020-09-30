@@ -165,6 +165,13 @@ public:
     vec(int size)               : data(NULL) , sz(0)   , cap(0)    { growTo(size); }
     vec(int size, const T& pad) : data(NULL) , sz(0)   , cap(0)    { growTo(size, pad); }
     vec(T* array, int size)     : data(array), sz(size), cap(size) { }      // (takes ownership of array -- will be deallocated with 'xfree()')
+    vec(const std::initializer_list<T>& list) : data(NULL), sz(0), cap(0) {
+        growTo(list.size());
+        auto i = 0;
+        for(const auto& elem : list) {
+            (*this)[i++] = elem;
+        }
+    }
    ~vec(void)                                                      { clear(true); }
 
     vec(const vec<T>& other) : vec()
