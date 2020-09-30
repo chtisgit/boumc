@@ -6,6 +6,7 @@
 
 #include "aag.h"
 #include "translate.h"
+#include "dimacs.h"
 
 struct Env {
 	int K = -1;
