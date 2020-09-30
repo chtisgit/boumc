@@ -17,6 +17,11 @@ LIBS := $(MINISAT)/libminisat.a $(LIBS)
 
 all: boumc
 
+archive: clean boumc.zip
+
+boumc.zip: MiniSat-p_v1.14 *.cpp *.h run-part* Makefile examples tests
+	zip -r boumc-fiedler.zip $^
+
 $(MINISAT)/libminisat.a:
 	cd $(MINISAT) && $(MAKE) libminisat.a
 
@@ -33,4 +38,4 @@ clean:
 	$(RM) *.o
 	cd $(MINISAT) && $(MAKE) clean
 
-.PHONY: all clean tests
+.PHONY: all clean tests archive
